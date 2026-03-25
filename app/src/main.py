@@ -39,6 +39,8 @@ from .transcription import get_client
 from .hotkeys import create_hotkey_listener
 from .clipboard import copy_to_clipboard
 from .vad_processor import is_vad_available
+from .audio_feedback import get_feedback
+from .tts_announcer import get_announcer
 
 
 class TranscriptionWorker(QThread):
@@ -143,6 +145,21 @@ class SettingsDialog(QDialog):
         sep3.setFrameShape(QFrame.Shape.HLine)
         layout.addRow(sep3)
 
+        # Audio feedback
+        self.feedback_combo = QComboBox()
+        self.feedback_combo.addItem("Beeps", "beeps")
+        self.feedback_combo.addItem("Voice (TTS)", "tts")
+        self.feedback_combo.addItem("Silent", "silent")
+        idx = self.feedback_combo.findData(config.audio_feedback_mode)
+        if idx >= 0:
+            self.feedback_combo.setCurrentIndex(idx)
+        layout.addRow("Audio feedback:", self.feedback_combo)
+
+        # Separator
+        sep3b = QFrame()
+        sep3b.setFrameShape(QFrame.Shape.HLine)
+        layout.addRow(sep3b)
+
         # Output modes
         self.out_app = QCheckBox("Show in app")
         self.out_app.setChecked(config.output_to_app)
@@ -191,6 +208,7 @@ class SettingsDialog(QDialog):
         self.config.output_to_app = self.out_app.isChecked()
         self.config.output_to_clipboard = self.out_clipboard.isChecked()
         self.config.output_to_inject = self.out_inject.isChecked()
+        self.config.audio_feedback_mode = self.feedback_combo.currentData()
         self.config.hotkey_toggle = self.hotkey_toggle_edit.text().strip().lower()
         self.config.hotkey_clear = self.hotkey_clear_edit.text().strip().lower()
         return self.config
@@ -410,6 +428,26 @@ class MainWindow(QMainWindow):
 
         self.hotkey_listener.start()
 
+    # ── Audio feedback ──
+
+    def _play_beep(self, beep_method: str):
+        """Play a beep sound if in beeps mode."""
+        if self.config.audio_feedback_mode == "beeps":
+            getattr(get_feedback(), beep_method)()
+
+    def _play_tts(self, announce_method: str):
+        """Play a TTS announcement if in tts mode."""
+        if self.config.audio_feedback_mode == "tts":
+            getattr(get_announcer(), announce_method)()
+
+    def _audio_feedback(self, beep_method: str, tts_method: str):
+        """Play audio feedback based on current mode."""
+        mode = self.config.audio_feedback_mode
+        if mode == "beeps":
+            getattr(get_feedback(), beep_method)()
+        elif mode == "tts":
+            getattr(get_announcer(), tts_method)()
+
     # ── Recording controls ──
 
     def _toggle_recording(self):
@@ -422,6 +460,8 @@ class MainWindow(QMainWindow):
     def _start_recording(self):
         if self.recorder.is_recording:
             return
+        # Play feedback BEFORE starting recording (so mic doesn't capture it)
+        self._audio_feedback("play_start", "announce_recording")
         if self.recorder.start_recording():
             self.record_btn.setText("  Stop")
             self.record_btn.setStyleSheet(self._record_btn_style(True))
@@ -434,6 +474,7 @@ class MainWindow(QMainWindow):
             return
         self._duration_timer.stop()
         audio_data = self.recorder.stop_recording()
+        self._audio_feedback("play_stop", "announce_stopped")
         self.record_btn.setText("  Record")
         self.record_btn.setStyleSheet(self._record_btn_style(False))
 
@@ -451,6 +492,7 @@ class MainWindow(QMainWindow):
             self._duration_timer.stop()
             audio_data = self.recorder.stop_recording()
             self._cached_segments.append(audio_data)
+            self._audio_feedback("play_cached", "announce_cached")
             self.record_btn.setText("  Record")
             self.record_btn.setStyleSheet(self._record_btn_style(False))
             n = len(self._cached_segments)
@@ -464,6 +506,7 @@ class MainWindow(QMainWindow):
         if not self._cached_segments:
             self.status_label.setText("No cached audio to transcribe")
             return
+        self._audio_feedback("play_transcribe", "announce_transcribing")
         audio_data = combine_wav_segments(self._cached_segments)
         self._cached_segments = []
         self._transcribe(audio_data)
@@ -478,9 +521,11 @@ class MainWindow(QMainWindow):
             return
         if self.recorder.is_paused:
             self.recorder.resume_recording()
+            self._audio_feedback("play_resume", "announce_resumed")
             self.status_label.setText("Recording...")
         else:
             self.recorder.pause_recording()
+            self._audio_feedback("play_pause", "announce_paused")
             self.status_label.setText("Paused")
 
     def _clear_recording(self):
@@ -491,6 +536,7 @@ class MainWindow(QMainWindow):
             self.record_btn.setText("  Record")
             self.record_btn.setStyleSheet(self._record_btn_style(False))
         self._cached_segments = []
+        self._audio_feedback("play_clear", "announce_cleared")
         self.duration_label.setText("")
         self.status_label.setText("Cleared")
 
@@ -540,6 +586,7 @@ class MainWindow(QMainWindow):
 
     def _on_transcription_done(self, text: str, elapsed: float):
         self.record_btn.setEnabled(True)
+        self._audio_feedback("play_complete", "announce_complete")
 
         if self.config.output_to_app:
             # Append to existing text with spacing

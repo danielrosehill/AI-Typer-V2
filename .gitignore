@@ -8,5 +8,6 @@ build/
 .env
 .env.local
 *.wav
+!app/assets/**/*.wav
 *.opus
 node_modules/

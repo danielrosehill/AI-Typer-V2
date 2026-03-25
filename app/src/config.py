@@ -217,6 +217,9 @@ class Config:
     output_to_clipboard: bool = True
     output_to_inject: bool = False
 
+    # Audio feedback mode: "beeps" (default), "tts" (voice), "silent"
+    audio_feedback_mode: str = "beeps"
+
     # Hotkeys
     hotkey_toggle: str = "f15"         # Start/stop+transcribe
     hotkey_tap_toggle: str = "f16"     # Start/stop+cache (append workflow)
