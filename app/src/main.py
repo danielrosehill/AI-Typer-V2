@@ -47,28 +47,41 @@ from .history import TranscriptionHistory
 
 
 class TranscriptionWorker(QThread):
-    """Background thread for transcription API call."""
+    """Background thread for audio processing + transcription API call."""
     finished = pyqtSignal(str, float)  # text, elapsed_seconds
     error = pyqtSignal(str)
+    status = pyqtSignal(str)  # status updates for UI
 
-    def __init__(self, api_key, model, audio_data, prompt, review_enabled=False):
+    def __init__(self, api_key, model, raw_audio_data, prompt,
+                 review_enabled=False, vad_enabled=False):
         super().__init__()
         self.api_key = api_key
         self.model = model
-        self.audio_data = audio_data
+        self.raw_audio_data = raw_audio_data
         self.prompt = prompt
         self.review_enabled = review_enabled
+        self.vad_enabled = vad_enabled
 
     def run(self):
         try:
             start = time.time()
+
+            # Audio processing (VAD + AGC + MP3 compression) — runs off main thread
+            self.status.emit("Processing audio...")
+            processed, orig_dur, vad_dur = prepare_audio_for_api(
+                self.raw_audio_data,
+                vad_enabled=self.vad_enabled,
+            )
+
+            self.status.emit("Transcribing...")
             client = get_client(self.api_key, self.model)
-            result = client.transcribe(self.audio_data, self.prompt)
+            result = client.transcribe(processed, self.prompt)
             text = result.text
 
             # Second-pass review
             if self.review_enabled and text and len(text.strip()) > 20:
                 try:
+                    self.status.emit("Reviewing...")
                     review_client = get_client(self.api_key, REVIEW_MODEL)
                     review_result = review_client.review_text(text, REVIEW_PROMPT)
                     if review_result.text and review_result.text.strip():
@@ -903,24 +916,21 @@ class MainWindow(QMainWindow):
         self.record_btn.setEnabled(False)
         self._update_tray_state("transcribing")
 
-        # Process audio (VAD + AGC + compression)
-        processed, orig_dur, vad_dur = prepare_audio_for_api(
-            audio_data,
-            vad_enabled=self.config.vad_enabled,
-        )
+        # Build prompt with current UI settings (estimate duration from raw WAV)
+        from .audio_processor import get_audio_duration
+        prompt = build_cleanup_prompt(self.config,
+                                      audio_duration_seconds=get_audio_duration(audio_data))
 
-        self.status_label.setText("Transcribing...")
-
-        # Build prompt with current UI settings
-        prompt = build_cleanup_prompt(self.config, audio_duration_seconds=orig_dur)
-
+        # Audio processing + transcription both run in background thread
         self.worker = TranscriptionWorker(
             api_key=self.config.gemini_api_key,
             model=self.config.selected_model,
-            audio_data=processed,
+            raw_audio_data=audio_data,
             prompt=prompt,
             review_enabled=self.config.review_enabled,
+            vad_enabled=self.config.vad_enabled,
         )
+        self.worker.status.connect(self.status_label.setText)
         self.worker.finished.connect(self._on_transcription_done)
         self.worker.error.connect(self._on_transcription_error)
         self.worker.start()

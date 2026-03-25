@@ -131,7 +131,7 @@ class GeminiClient:
             model=self.model,
             config={"system_instruction": prompt},
             contents=[
-                types.Part.from_bytes(data=audio_data, mime_type="audio/wav"),
+                types.Part.from_bytes(data=audio_data, mime_type="audio/mp3"),
             ],
         )
 

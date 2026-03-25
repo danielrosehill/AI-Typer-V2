@@ -7,6 +7,9 @@ from pydub import AudioSegment
 TARGET_SAMPLE_RATE = 16000
 TARGET_CHANNELS = 1
 
+# Skip VAD for recordings shorter than this (overhead not worth it)
+VAD_MIN_DURATION_SECS = 5.0
+
 # AGC settings
 AGC_TARGET_PEAK_DBFS = -3.0
 AGC_MIN_PEAK_DBFS = -40.0
@@ -62,8 +65,8 @@ def prepare_audio_for_api(
     if audio.frame_rate != TARGET_SAMPLE_RATE:
         audio = audio.set_frame_rate(TARGET_SAMPLE_RATE)
 
-    # Apply VAD
-    if vad_enabled and is_vad_available():
+    # Apply VAD (skip for short recordings — overhead not worth it)
+    if vad_enabled and is_vad_available() and original_duration >= VAD_MIN_DURATION_SECS:
         vad = get_vad()
         speeches = vad._get_speech_timestamps_from_audio(audio)
         if speeches:
@@ -87,9 +90,9 @@ def prepare_audio_for_api(
             print(f"AGC: Applied {agc_stats['gain_applied_db']}dB gain "
                   f"(peak: {agc_stats['original_peak_dbfs']:.1f}dB -> {agc_stats['final_peak_dbfs']:.1f}dB)")
 
-    # Export once
+    # Export as MP3 for much smaller upload size (10-20x smaller than WAV)
     output = io.BytesIO()
-    audio.export(output, format="wav")
+    audio.export(output, format="mp3", bitrate="64k")
     return output.getvalue(), original_duration, vad_duration
 
 
