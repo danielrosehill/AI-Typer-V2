@@ -7,11 +7,13 @@ cd "$SCRIPT_DIR/app"
 # Create venv if it doesn't exist
 if [ ! -d ".venv" ]; then
     echo "Creating virtual environment..."
+    # Use system Python (not Homebrew) for native extensions (pyaudio, evdev)
+    PYTHON=$(/usr/bin/python3 --version >/dev/null 2>&1 && echo /usr/bin/python3 || echo python3)
     if command -v uv &> /dev/null; then
-        uv venv
+        uv venv --python "$PYTHON"
         uv pip install -r requirements.txt
     else
-        python3 -m venv .venv
+        $PYTHON -m venv .venv
         .venv/bin/pip install -r requirements.txt
     fi
 fi

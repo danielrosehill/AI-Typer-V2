@@ -41,10 +41,23 @@ build_deb() {
     cp -r "$SCRIPT_DIR/app" "$BUILD_DIR/opt/${PKG_NAME}/"
     cp "$SCRIPT_DIR/run.sh" "$BUILD_DIR/opt/${PKG_NAME}/"
 
-    # Create venv
+    # Create venv — prefer python3.12 (has dev headers), fallback to system python3
     cd "$BUILD_DIR/opt/${PKG_NAME}/app"
-    python3 -m venv .venv
-    .venv/bin/pip install -q -r requirements.txt
+    if command -v uv &> /dev/null; then
+        # uv can find the right Python
+        if python3.12 --version >/dev/null 2>&1; then
+            uv venv .venv --python python3.12 --seed
+        else
+            uv venv .venv --python /usr/bin/python3 --seed
+        fi
+        source .venv/bin/activate
+        uv pip install -r requirements.txt
+        deactivate
+    else
+        PYTHON=$(command -v python3.12 || echo /usr/bin/python3)
+        $PYTHON -m venv .venv
+        .venv/bin/pip install -q -r requirements.txt
+    fi
 
     # Launcher
     cat > "$BUILD_DIR/usr/local/bin/${PKG_NAME}" << 'LAUNCHER'
