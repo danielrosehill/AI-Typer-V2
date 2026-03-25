@@ -367,16 +367,21 @@ class MainWindow(QMainWindow):
         self.text_edit.setAcceptRichText(False)
         splitter.addWidget(self.text_edit)
 
-        # History panel (right, collapsible)
-        history_widget = QWidget()
-        history_layout = QVBoxLayout(history_widget)
+        # History panel (right, collapsible accordion)
+        self.history_widget = QWidget()
+        history_layout = QVBoxLayout(self.history_widget)
         history_layout.setContentsMargins(0, 0, 0, 0)
         history_layout.setSpacing(4)
 
         history_header = QHBoxLayout()
-        history_title = QLabel("Recent")
-        history_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #888;")
-        history_header.addWidget(history_title)
+        self.history_toggle_btn = QPushButton("▶ Recent")
+        self.history_toggle_btn.setStyleSheet(
+            "font-weight: bold; font-size: 12px; color: #888; "
+            "border: none; text-align: left; padding: 2px 4px;"
+        )
+        self.history_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.history_toggle_btn.clicked.connect(self._toggle_history)
+        history_header.addWidget(self.history_toggle_btn)
         history_header.addStretch()
         history_clear_btn = QPushButton("Clear")
         history_clear_btn.setFixedHeight(22)
@@ -393,12 +398,13 @@ class MainWindow(QMainWindow):
             "QListWidget::item:hover { background-color: #f0f0f0; }"
         )
         self.history_list.itemClicked.connect(self._on_history_item_clicked)
+        self.history_list.setVisible(False)  # Hidden by default
         history_layout.addWidget(self.history_list)
 
-        splitter.addWidget(history_widget)
+        splitter.addWidget(self.history_widget)
 
-        # Set initial sizes: text area gets most space, history panel is narrow
-        splitter.setSizes([500, 200])
+        # Set initial sizes: text area gets all space, history header only
+        splitter.setSizes([700, 0])
         splitter.setCollapsible(0, False)  # Text area can't be collapsed
         splitter.setCollapsible(1, True)   # History can be collapsed
 
@@ -940,6 +946,8 @@ class MainWindow(QMainWindow):
 
         if self.config.output_to_clipboard:
             copy_to_clipboard(text)
+            # Play clipboard sound after the completion ding
+            self._play_beep("play_clipboard")
 
         if self.config.output_to_inject:
             self._inject_text(text)
@@ -947,7 +955,7 @@ class MainWindow(QMainWindow):
         # Status
         parts = [f"Done in {elapsed:.1f}s"]
         if self.config.output_to_clipboard:
-            parts.append("copied")
+            parts.append("On clipboard")
         if self.config.output_to_inject:
             parts.append("injected")
         self.status_label.setText(" | ".join(parts))
@@ -1026,6 +1034,12 @@ class MainWindow(QMainWindow):
             self.beep_label.setText("\U0001f507 Silent")
 
     # ── History ──
+
+    def _toggle_history(self):
+        """Toggle history list visibility (accordion)."""
+        visible = not self.history_list.isVisible()
+        self.history_list.setVisible(visible)
+        self.history_toggle_btn.setText("▼ Recent" if visible else "▶ Recent")
 
     def _refresh_history_list(self):
         """Update the history list widget."""

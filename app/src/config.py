@@ -9,53 +9,194 @@ from typing import Optional
 CONFIG_DIR = Path.home() / ".config" / "ai-typer-v2"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-# Available models via OpenRouter
+# Available models (direct Gemini API)
 MODELS = [
-    ("google/gemini-3-flash-preview", "Gemini 3 Flash (Default)"),
-    ("google/gemini-3-pro-preview", "Gemini 3 Pro"),
+    ("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash-Lite (Default)"),
+    ("gemini-3-flash-preview", "Gemini 3 Flash"),
+    ("gemini-3-pro-preview", "Gemini 3 Pro"),
 ]
 
 # Review agent model (cheap, fast)
-REVIEW_MODEL = "google/gemini-3.1-flash-lite-preview"
+REVIEW_MODEL = "gemini-3.1-flash-lite-preview"
 
 # Format presets — kept simple, no complex templating
 # Each preset adds a short, targeted instruction to the cleanup prompt
+# Format presets organized by category for grouped dropdown display.
+# "category" controls visual grouping in the UI combo box.
 FORMAT_PRESETS = {
+    # ── Basics ──
     "auto": {
         "label": "Auto-detect",
-        "instruction": "",  # Let the model figure it out
+        "category": "Basics",
+        "instruction": "",
     },
     "general": {
         "label": "General",
+        "category": "Basics",
         "instruction": "",
-    },
-    "email": {
-        "label": "Email",
-        "instruction": "Format the output as a professional email with greeting and sign-off.",
-    },
-    "todo": {
-        "label": "To-Do List",
-        "instruction": "Format the output as a clean to-do list with checkboxes (- [ ] items).",
-    },
-    "meeting": {
-        "label": "Meeting Notes",
-        "instruction": "Format as structured meeting notes with sections and action items.",
     },
     "bullets": {
         "label": "Bullet Points",
+        "category": "Basics",
         "instruction": "Format the output as concise bullet points.",
+    },
+    "notes": {
+        "label": "Notes",
+        "category": "Basics",
+        "instruction": "Format as clean, organized notes with headings and bullet points. Keep it concise and scannable.",
+    },
+    # ── Communication ──
+    "email": {
+        "label": "Email",
+        "category": "Communication",
+        "instruction": "Format the output as a professional email with greeting and sign-off.",
+    },
+    "social_post": {
+        "label": "Social Post",
+        "category": "Communication",
+        "instruction": "Format as a social media post. Keep it punchy, engaging, and appropriately brief. Include hashtag suggestions if relevant.",
+    },
+    "persuasive": {
+        "label": "Persuasive",
+        "category": "Communication",
+        "instruction": "Format as persuasive writing — proposals, pitches, or sales copy. Lead with the value proposition, use compelling language, and include a clear call to action.",
+    },
+    # ── Writing ──
+    "blog": {
+        "label": "Blog Post",
+        "category": "Writing",
+        "instruction": "Format as a blog post with a compelling title, introduction, body paragraphs with subheadings, and a conclusion.",
+    },
+    "blog_outline": {
+        "label": "Blog Outline",
+        "category": "Writing",
+        "instruction": "Format as a blog post outline — not a full draft. Include a working title, a one-line thesis, section headings with 1-2 bullet points of key ideas under each, and a suggested conclusion angle. Keep it skeletal and scannable so the writer can flesh it out.",
+    },
+    # ── Dev & AI ──
+    "edit_instructions": {
+        "label": "Edit Instructions",
+        "category": "Dev & AI",
+        "instruction": "Format as structured editing instructions intended for an AI coding agent or developer. Use clear numbered steps. For each issue: state what's wrong, where it is (component/section/area), and exactly what the fix should be. Be precise and unambiguous — the reader cannot see the UI, so describe locations and expected behavior explicitly. Group related fixes together.",
+    },
+    "ai_prompt": {
+        "label": "AI Prompt",
+        "category": "Dev & AI",
+        "instruction": "Format as a well-structured AI/LLM prompt. Use clear sections (Role, Context, Task, Constraints, Output Format) where appropriate. Preserve the speaker's intent as instructions for an AI system.",
+    },
+    "dev_spec": {
+        "label": "Dev Spec",
+        "category": "Dev & AI",
+        "instruction": "Format as a development specification or technical requirements document. Use headings, acceptance criteria, and structured sections (Overview, Requirements, Implementation Notes, Edge Cases).",
+    },
+    "bug_report": {
+        "label": "Bug Report",
+        "category": "Dev & AI",
+        "instruction": "Format as a structured bug report with sections: Summary, Steps to Reproduce, Expected Behavior, Actual Behavior, and Environment/Notes.",
     },
     "technical": {
         "label": "Technical Docs",
-        "instruction": "Format as clear technical documentation with headings and code blocks where relevant.",
+        "category": "Dev & AI",
+        "instruction": "Format as clear, direct technical documentation with headings and code blocks where relevant. Focus on accuracy and specificity, not marketing.",
+    },
+    # ── Productivity ──
+    "todo": {
+        "label": "To-Do List",
+        "category": "Productivity",
+        "instruction": "Format the output as a clean to-do list with checkboxes (- [ ] items).",
+    },
+    "meeting_agenda": {
+        "label": "Meeting Agenda",
+        "category": "Productivity",
+        "instruction": "Format as a structured meeting agenda with numbered items, time allocations where mentioned, attendees if stated, and action items.",
     },
 }
 
 # Tone presets
+# Predefined hotkey options — nicely formatted for dropdown selection
+HOTKEY_OPTIONS = [
+    ("", "None"),
+    ("f1", "F1"),
+    ("f2", "F2"),
+    ("f3", "F3"),
+    ("f4", "F4"),
+    ("f5", "F5"),
+    ("f6", "F6"),
+    ("f7", "F7"),
+    ("f8", "F8"),
+    ("f9", "F9"),
+    ("f10", "F10"),
+    ("f11", "F11"),
+    ("f12", "F12"),
+    ("f13", "F13"),
+    ("f14", "F14"),
+    ("f15", "F15"),
+    ("f16", "F16"),
+    ("f17", "F17"),
+    ("f18", "F18"),
+    ("f19", "F19"),
+    ("f20", "F20"),
+    ("f21", "F21"),
+    ("f22", "F22"),
+    ("f23", "F23"),
+    ("f24", "F24"),
+    ("scroll_lock", "Scroll Lock"),
+    ("pause", "Pause/Break"),
+    ("insert", "Insert"),
+    ("home", "Home"),
+    ("end", "End"),
+    ("page_up", "Page Up"),
+    ("page_down", "Page Down"),
+]
+
+# =============================================================================
+# TRANSLATION MODE
+# =============================================================================
+TRANSLATION_LANGUAGES = [
+    ("", "Off"),
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("pt", "Portuguese"),
+    ("nl", "Dutch"),
+    ("ru", "Russian"),
+    ("zh", "Chinese (Simplified)"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("ar", "Arabic"),
+    ("he", "Hebrew"),
+    ("hi", "Hindi"),
+    ("tr", "Turkish"),
+    ("pl", "Polish"),
+    ("uk", "Ukrainian"),
+    ("sv", "Swedish"),
+    ("da", "Danish"),
+    ("no", "Norwegian"),
+    ("fi", "Finnish"),
+    ("el", "Greek"),
+    ("ro", "Romanian"),
+    ("id", "Indonesian"),
+]
+
+
+def get_language_display_name(code: str) -> str:
+    for c, name in TRANSLATION_LANGUAGES:
+        if c == code:
+            return name
+    return code
+
+
 TONE_PRESETS = {
-    "casual": "Use a casual, conversational tone.",
+    "casual": "Use a casual, conversational tone as if chatting with a friend.",
     "neutral": "",  # No additional instruction
     "professional": "Use a professional, polished tone.",
+    "formal": "Use a formal, authoritative tone. Avoid contractions and colloquialisms.",
+    "terse": "Be extremely brief. Short sentences. No filler. Maximum information density.",
+    "informal": "Use a relaxed, informal style with contractions and natural phrasing. Friendly but not sloppy.",
+    "promotional": "Use an enthusiastic, marketing-oriented tone. Highlight benefits, create excitement, drive action.",
+    "allcaps": "WRITE THE ENTIRE OUTPUT IN ALL CAPS. MAINTAIN PROPER PUNCTUATION AND STRUCTURE OTHERWISE.",
+    "shakespearean": "Write in an exaggerated Shakespearean style with archaic vocabulary, dramatic flair, and poetic phrasing. Forsooth!",
 }
 
 
@@ -85,7 +226,8 @@ CLEANUP_PROMPT = """Your task is to provide a cleaned transcription of the audio
 ## What to Fix
 
 - **Punctuation**: Add periods, commas, colons, semicolons, question marks, quotation marks.
-- **Paragraphs**: Break text into logical paragraphs based on topic shifts.
+- **Paragraphs**: Break text into short, logical paragraphs — typically 2-4 sentences each. Separate every paragraph with a blank line (two newlines). Err on the side of MORE paragraph breaks rather than fewer. A topic shift, new point, or change of direction always warrants a new paragraph.
+- **Headings**: For longer texts (roughly 4+ paragraphs), add brief markdown headings (## or ###) to group related paragraphs into sections. Do not add headings to short texts.
 - **Capitalization**: Proper sentence capitalization.
 - **Grammar**: Fix subject-verb agreement, tense consistency, homophones (their/there/they're), minor speech grammar errors.
 - **Clarity**: Tighten rambling sentences without removing information. Clarify confusing phrasing while preserving meaning.
@@ -102,7 +244,7 @@ Apply only essential cleanup:
 - Capitalize sentences properly
 - Remove filler words (um, uh, like, you know)
 - Fix obvious grammar errors
-- Break into paragraphs if multiple distinct thoughts
+- Break into short paragraphs (2-4 sentences) separated by blank lines if multiple distinct thoughts
 
 Output ONLY the cleaned text. No preamble, no commentary."""
 
@@ -160,19 +302,14 @@ def build_cleanup_prompt(
 
     parts = [CLEANUP_PROMPT]
 
-    # User name injection
-    if config.user_name:
-        parts.append(f"\n## User Details\n- The speaker's name is {config.user_name}. "
-                      "Use this for signatures or sign-offs where appropriate.")
-
     # Format preset
     format_data = FORMAT_PRESETS.get(config.format_preset, {})
     instruction = format_data.get("instruction", "")
     if instruction:
         parts.append(f"\n## Format\n{instruction}")
 
-    # Email personalization
-    if config.format_preset == "email" and (config.email_address or config.user_name):
+    # Email personalization — name/sig only injected here, not globally
+    if config.format_preset == "email":
         email_parts = []
         if config.user_name:
             email_parts.append(f"- Sign emails as: {config.user_name}")
@@ -188,6 +325,15 @@ def build_cleanup_prompt(
     if tone_instruction:
         parts.append(f"\n## Tone\n{tone_instruction}")
 
+    # Translation
+    if config.translation_target:
+        target_name = get_language_display_name(config.translation_target)
+        parts.append(f"\n## Translation\n"
+                     f"- After cleaning up the transcription, translate the entire output into {target_name}.\n"
+                     f"- The final output must be entirely in {target_name}.\n"
+                     f"- Preserve the formatting, structure, and meaning of the original "
+                     f"while producing natural-sounding text in the target language.")
+
     return "\n".join(parts)
 
 
@@ -196,15 +342,15 @@ class Config:
     """Application configuration — clean, no legacy cruft."""
 
     # API
-    openrouter_api_key: str = ""
-    selected_model: str = "google/gemini-3-flash-preview"
+    gemini_api_key: str = ""
+    selected_model: str = "gemini-3.1-flash-lite-preview"
 
     # Transcription
     vad_enabled: bool = True
-    review_enabled: bool = True  # Second-pass coherence check
+    review_enabled: bool = False  # Second-pass coherence check (doubles latency)
 
     # Format & tone
-    format_preset: str = "auto"
+    format_preset: str = "general"
     tone: str = "neutral"
 
     # Personalization
@@ -217,6 +363,9 @@ class Config:
     output_to_clipboard: bool = True
     output_to_inject: bool = False
 
+    # Translation (empty = off, language code = translate to that language)
+    translation_target: str = ""
+
     # Audio feedback mode: "beeps" (default), "tts" (voice), "silent"
     audio_feedback_mode: str = "beeps"
 
@@ -227,6 +376,7 @@ class Config:
     hotkey_clear: str = "f18"          # Clear recording and cache
     hotkey_append: str = "f19"         # Append: start recording to add to cache
     hotkey_pause: str = "f20"          # Pause/resume
+    hotkey_retake: str = "f21"         # Discard current + restart recording
 
     # Window
     window_width: int = 700
@@ -249,9 +399,14 @@ def load_config() -> Config:
             if hasattr(config, key):
                 setattr(config, key, value)
 
-        # Load API key from env if not in config
-        if not config.openrouter_api_key:
-            config.openrouter_api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        # Env var always overrides saved key if set
+        env_key = os.environ.get("GEMINI_API_KEY", "")
+        if env_key:
+            config.gemini_api_key = env_key
+
+        # Migration: if old openrouter key exists in config, clear it
+        if not config.gemini_api_key and "openrouter_api_key" in data:
+            pass  # Can't reuse OpenRouter keys for Gemini
 
         return config
     except Exception:

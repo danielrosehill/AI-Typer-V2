@@ -6,6 +6,8 @@ AI Typer V2 is a simplified PyQt6 desktop application for voice dictation with A
 
 This is a fresh start based on the learnings from AI-Transcription-Notepad (Voice Notepad V3), keeping the proven audio pipeline and transcription engine while dramatically simplifying the UI and configuration.
 
+**Original app (V3)**: `~/repos/github/AI-Transcription-Notepad/` — the predecessor with full-featured UI including system tray with state icons, context menu, translation mode, segment indicators, mic selector, and tabbed settings. When porting features from V3, reference that repo's `app/src/` directory for implementation patterns.
+
 ## Core Concept
 
 **Single multimodal pass**: Audio goes to Gemini, which transcribes AND cleans up simultaneously. No separate ASR + LLM stages. The cleanup prompt handles filler word removal, punctuation, paragraph spacing, grammar fixes, and smart format detection.
@@ -39,11 +41,12 @@ app/src/
 - The cleanup prompt is the core value — changes should be carefully tested
 - Backend audio pipeline (recorder, processor, VAD) is proven code from V3 — modify carefully
 - All models accessed via OpenRouter (no direct Gemini/Google API)
+- **After debugging/changes: always rebuild the .deb and install** (`./build.sh --dev`). This is a persistent preference — every fix or feature change should end with a fresh build + install cycle.
 
 ## Environment Variables
 
 ```
-OPENROUTER_API_KEY=your_key
+GEMINI_API_KEY=your_key
 ```
 
 ## Building
