@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QComboBox, QLabel, QDialog, QFormLayout,
     QLineEdit, QCheckBox, QMessageBox, QFrame, QSizePolicy,
+    QListWidget, QListWidgetItem, QSplitter,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QAction, QIcon
@@ -41,6 +42,7 @@ from .clipboard import copy_to_clipboard
 from .vad_processor import is_vad_available
 from .audio_feedback import get_feedback
 from .tts_announcer import get_announcer
+from .history import TranscriptionHistory
 
 
 class TranscriptionWorker(QThread):
@@ -233,6 +235,7 @@ class MainWindow(QMainWindow):
         self.hotkey_listener = None
         self.worker = None
         self._cached_segments: list[bytes] = []
+        self._history = TranscriptionHistory(max_items=20)
         self._duration_timer = QTimer()
         self._duration_timer.timeout.connect(self._update_duration)
 
@@ -297,7 +300,10 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(controls)
 
-        # ── Text area ──
+        # ── Main area: text editor + history sidebar ──
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # Text editor (left, main)
         self.text_edit = QTextEdit()
         self.text_edit.setPlaceholderText(
             "Press the record button or your hotkey to start dictating.\n\n"
@@ -305,7 +311,44 @@ class MainWindow(QMainWindow):
         )
         self.text_edit.setFont(QFont("Sans Serif", 12))
         self.text_edit.setAcceptRichText(False)
-        layout.addWidget(self.text_edit)
+        splitter.addWidget(self.text_edit)
+
+        # History panel (right, collapsible)
+        history_widget = QWidget()
+        history_layout = QVBoxLayout(history_widget)
+        history_layout.setContentsMargins(0, 0, 0, 0)
+        history_layout.setSpacing(4)
+
+        history_header = QHBoxLayout()
+        history_title = QLabel("Recent")
+        history_title.setStyleSheet("font-weight: bold; font-size: 12px; color: #888;")
+        history_header.addWidget(history_title)
+        history_header.addStretch()
+        history_clear_btn = QPushButton("Clear")
+        history_clear_btn.setFixedHeight(22)
+        history_clear_btn.setStyleSheet("font-size: 10px; padding: 2px 8px;")
+        history_clear_btn.clicked.connect(self._clear_history)
+        history_header.addWidget(history_clear_btn)
+        history_layout.addLayout(history_header)
+
+        self.history_list = QListWidget()
+        self.history_list.setMaximumWidth(250)
+        self.history_list.setStyleSheet(
+            "QListWidget { font-size: 11px; border: 1px solid #ddd; }"
+            "QListWidget::item { padding: 4px 6px; }"
+            "QListWidget::item:hover { background-color: #f0f0f0; }"
+        )
+        self.history_list.itemClicked.connect(self._on_history_item_clicked)
+        history_layout.addWidget(self.history_list)
+
+        splitter.addWidget(history_widget)
+
+        # Set initial sizes: text area gets most space, history panel is narrow
+        splitter.setSizes([500, 200])
+        splitter.setCollapsible(0, False)  # Text area can't be collapsed
+        splitter.setCollapsible(1, True)   # History can be collapsed
+
+        layout.addWidget(splitter)
 
         # ── Bottom control bar ──
         bottom = QHBoxLayout()
@@ -588,6 +631,11 @@ class MainWindow(QMainWindow):
         self.record_btn.setEnabled(True)
         self._audio_feedback("play_complete", "announce_complete")
 
+        # Add to session history
+        self._history.add(text, elapsed_seconds=elapsed,
+                          format_preset=self.config.format_preset)
+        self._refresh_history_list()
+
         if self.config.output_to_app:
             # Append to existing text with spacing
             existing = self.text_edit.toPlainText()
@@ -658,6 +706,30 @@ class MainWindow(QMainWindow):
     def _on_tone_changed(self):
         self.config.tone = self.tone_combo.currentData()
         save_config(self.config)
+
+    # ── History ──
+
+    def _refresh_history_list(self):
+        """Update the history list widget."""
+        self.history_list.clear()
+        for entry in self._history.get_all():
+            item = QListWidgetItem(f"{entry.time_str}  {entry.preview}")
+            item.setToolTip(entry.text[:500])
+            item.setData(Qt.ItemDataRole.UserRole, entry.text)
+            self.history_list.addItem(item)
+
+    def _on_history_item_clicked(self, item: QListWidgetItem):
+        """Load a history entry into the text editor."""
+        text = item.data(Qt.ItemDataRole.UserRole)
+        if text:
+            self.text_edit.setPlainText(text)
+            self.status_label.setText("Loaded from history")
+
+    def _clear_history(self):
+        """Clear session history."""
+        self._history.clear()
+        self.history_list.clear()
+        self.status_label.setText("History cleared")
 
     def _open_settings(self):
         dialog = SettingsDialog(self.config, self)
