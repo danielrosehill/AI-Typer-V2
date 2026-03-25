@@ -1,0 +1,9 @@
+PyQt6>=6.6.0
+pyaudio>=0.2.14
+openai>=1.40.0
+pydub>=0.25.1
+audioop-lts>=0.2.0; python_version>="3.13"
+pynput>=1.7.6
+evdev>=1.6.0; sys_platform=="linux"
+ten-vad>=1.0.6
+numpy>=1.24.0

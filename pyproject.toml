@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-typer-v2"
+version = "0.1.0"
+description = "Voice dictation with multimodal AI cleanup — speak naturally, get polished text"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Daniel Rosehill", email = "public@danielrosehill.com"}
+]
+keywords = ["voice", "dictation", "transcription", "ai", "gemini", "multimodal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "PyQt6>=6.6.0",
+    "pyaudio>=0.2.14",
+    "openai>=1.40.0",
+    "pydub>=0.25.1",
+    "audioop-lts>=0.2.0; python_version>='3.13'",
+    "pynput>=1.7.6",
+]
+
+[project.optional-dependencies]
+vad = ["ten-vad>=1.0.6", "numpy>=1.24.0"]
+linux = ["evdev>=1.6.0"]
+
+[project.scripts]
+ai-typer = "src.main:main"
+
+[project.urls]
+Homepage = "https://github.com/danielrosehill/AI-Typer-V2"
+Repository = "https://github.com/danielrosehill/AI-Typer-V2"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
