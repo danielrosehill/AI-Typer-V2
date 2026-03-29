@@ -912,6 +912,11 @@ class MainWindow(QMainWindow):
             return
         # Play feedback BEFORE starting recording (so mic doesn't capture it)
         self._audio_feedback("play_start", "announce_recording")
+        QTimer.singleShot(200, self._begin_recording)
+
+    def _begin_recording(self):
+        if self.recorder.is_recording:
+            return
         if self.recorder.start_recording():
             self.text_edit.clear()
             self._raw_text = ""
