@@ -7,6 +7,7 @@ Single-window UI: record, transcribe, done. Format detection is automatic.
 import sys
 import os
 import time
+import threading
 import subprocess
 from pathlib import Path
 
@@ -1109,13 +1110,40 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Mic error: {error}")
 
     def _inject_text(self, text: str):
-        """Type text at cursor position using ydotool."""
+        """Paste text at cursor position via clipboard + Ctrl+V."""
         try:
+            # Save current clipboard
+            old_clip = None
+            try:
+                result = subprocess.run(
+                    ["wl-paste", "--no-newline"],
+                    capture_output=True, timeout=2,
+                )
+                if result.returncode == 0:
+                    old_clip = result.stdout
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+            # Set clipboard to transcribed text and paste
+            copy_to_clipboard(text)
             subprocess.run(
-                ["ydotool", "type", "--", text],
-                timeout=10,
-                capture_output=True,
+                ["ydotool", "key", "ctrl+v"],
+                timeout=5, capture_output=True,
             )
+
+            # Restore previous clipboard after paste completes
+            if old_clip is not None:
+                def _restore():
+                    time.sleep(0.3)
+                    try:
+                        proc = subprocess.Popen(
+                            ["wl-copy"], stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                        )
+                        proc.communicate(input=old_clip, timeout=5)
+                    except Exception:
+                        pass
+                threading.Thread(target=_restore, daemon=True).start()
+
         except FileNotFoundError:
             self.status_label.setText("ydotool not installed — can't inject text")
         except Exception as e:

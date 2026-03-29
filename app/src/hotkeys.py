@@ -236,9 +236,32 @@ class EvdevHotkeyListener:
             for path in evdev.list_devices():
                 try:
                     device = evdev.InputDevice(path)
+                    caps = device.capabilities()
+                    # Accept any device that has EV_KEY with keyboard-like keys
+                    ev_key_caps = caps.get(ecodes.EV_KEY, [])
+                    if not ev_key_caps:
+                        device.close()
+                        continue
                     name_lower = device.name.lower()
-                    if "input-remapper" in name_lower and "keyboard" in name_lower:
+                    # Skip mice, audio devices, power buttons, etc.
+                    skip = ("mouse", "speaker", "hdmi", "headphone",
+                            "mic ", "power button", "sleep button",
+                            "video bus", "pc speaker")
+                    if any(s in name_lower for s in skip):
+                        device.close()
+                        continue
+                    # Must have real keyboard keys (KEY_A=30 or function keys)
+                    has_keyboard_keys = (
+                        ecodes.KEY_A in ev_key_caps or
+                        ecodes.KEY_F1 in ev_key_caps or
+                        ecodes.KEY_F13 in ev_key_caps
+                    )
+                    if has_keyboard_keys:
+                        if _debug_hotkeys:
+                            logger.debug(f"evdev: using device {device.path}: {device.name}")
                         devices.append(device)
+                    else:
+                        device.close()
                 except (PermissionError, OSError):
                     continue
         except Exception:

@@ -263,10 +263,10 @@ class AudioFeedback:
                 pass
 
         if HAS_PYAUDIO:
+            pa = None
             try:
-                if not hasattr(self, '_pyaudio_instance') or self._pyaudio_instance is None:
-                    self._pyaudio_instance = pyaudio.PyAudio()
-                stream = self._pyaudio_instance.open(
+                pa = pyaudio.PyAudio()
+                stream = pa.open(
                     format=pyaudio.paInt16, channels=1, rate=SAMPLE_RATE, output=True
                 )
                 stream.write(audio_data)
@@ -274,7 +274,13 @@ class AudioFeedback:
                 stream.close()
                 return
             except Exception:
-                self._pyaudio_instance = None
+                pass
+            finally:
+                if pa is not None:
+                    try:
+                        pa.terminate()
+                    except Exception:
+                        pass
 
 
 _feedback: Optional[AudioFeedback] = None
