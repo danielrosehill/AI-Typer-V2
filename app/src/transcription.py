@@ -1,20 +1,16 @@
-"""Transcription API client using Google Gemini directly."""
+"""Transcription API client using OpenRouter (OpenAI-compatible API)."""
 
+import base64
 import logging
 import re
 from dataclasses import dataclass
 from typing import Optional
 
-try:
-    from google import genai
-    from google.genai import types
-    GENAI_AVAILABLE = True
-except ImportError:
-    genai = None
-    types = None
-    GENAI_AVAILABLE = False
+import requests
 
 logger = logging.getLogger(__name__)
+
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Patterns that match AI preamble lines (case-insensitive).
 _PREAMBLE_PATTERNS = [
@@ -103,73 +99,96 @@ class TranscriptionResult:
     output_tokens: int = 0
 
 
-class GeminiClient:
-    """Google Gemini API client for audio transcription."""
+class OpenRouterClient:
+    """OpenRouter API client for audio transcription."""
 
-    _shared_client = None
-    _shared_client_key: str = ""
-
-    def __init__(self, api_key: str, model: str = "gemini-3.1-flash-lite-preview"):
+    def __init__(self, api_key: str, model: str = "google/gemini-3.1-flash-lite-preview"):
         self.api_key = api_key
         self.model = model
+        self._session: Optional[requests.Session] = None
 
-    def _get_client(self):
-        if (GeminiClient._shared_client is not None
-                and GeminiClient._shared_client_key == self.api_key):
-            return GeminiClient._shared_client
-        if not GENAI_AVAILABLE:
-            raise ImportError("google-genai package not installed — pip install google-genai")
-        GeminiClient._shared_client = genai.Client(api_key=self.api_key)
-        GeminiClient._shared_client_key = self.api_key
-        return GeminiClient._shared_client
+    def _get_session(self) -> requests.Session:
+        if self._session is None:
+            self._session = requests.Session()
+            self._session.headers.update({
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            })
+        return self._session
 
     def transcribe(self, audio_data: bytes, prompt: str) -> TranscriptionResult:
-        """Transcribe audio using Gemini multimodal model."""
-        client = self._get_client()
+        """Transcribe audio using OpenRouter multimodal model."""
+        audio_b64 = base64.b64encode(audio_data).decode("utf-8")
 
-        response = client.models.generate_content(
-            model=self.model,
-            config={"system_instruction": prompt},
-            contents=[
-                types.Part.from_bytes(data=audio_data, mime_type="audio/mp3"),
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": prompt,
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": audio_b64,
+                                "format": "mp3",
+                            },
+                        },
+                    ],
+                },
             ],
-        )
+        }
 
-        input_tokens = 0
-        output_tokens = 0
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            input_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) or 0
-            output_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) or 0
+        session = self._get_session()
+        response = session.post(OPENROUTER_API_URL, json=payload, timeout=120)
+        response.raise_for_status()
+        data = response.json()
+
+        text = data["choices"][0]["message"]["content"]
+        input_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+        output_tokens = data.get("usage", {}).get("completion_tokens", 0)
 
         return TranscriptionResult(
-            text=normalize_paragraph_spacing(strip_ai_preamble(response.text)),
+            text=normalize_paragraph_spacing(strip_ai_preamble(text)),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
 
     def review_text(self, text: str, review_prompt: str) -> TranscriptionResult:
         """Second-pass review of transcription (text-only, no audio)."""
-        client = self._get_client()
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": review_prompt,
+                },
+                {
+                    "role": "user",
+                    "content": text,
+                },
+            ],
+        }
 
-        response = client.models.generate_content(
-            model=self.model,
-            config={"system_instruction": review_prompt},
-            contents=text,
-        )
+        session = self._get_session()
+        response = session.post(OPENROUTER_API_URL, json=payload, timeout=60)
+        response.raise_for_status()
+        data = response.json()
 
-        input_tokens = 0
-        output_tokens = 0
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            input_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) or 0
-            output_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) or 0
+        text = data["choices"][0]["message"]["content"]
+        input_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+        output_tokens = data.get("usage", {}).get("completion_tokens", 0)
 
         return TranscriptionResult(
-            text=normalize_paragraph_spacing(strip_ai_preamble(response.text)),
+            text=normalize_paragraph_spacing(strip_ai_preamble(text)),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
 
 
-def get_client(api_key: str, model: str) -> GeminiClient:
+def get_client(api_key: str, model: str) -> OpenRouterClient:
     """Factory function to get transcription client."""
-    return GeminiClient(api_key, model)
+    return OpenRouterClient(api_key, model)

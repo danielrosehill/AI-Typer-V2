@@ -9,15 +9,103 @@ from typing import Optional
 CONFIG_DIR = Path.home() / ".config" / "ai-typer-v2"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-# Available models (direct Gemini API)
+# Available models (OpenRouter audio-in → text-out)
+# Each entry: id, label, category ("Standard" or "Budget"), manufacturer, description
 MODELS = [
-    ("gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash-Lite (Default)"),
-    ("gemini-3-flash-preview", "Gemini 3 Flash"),
-    ("gemini-3-pro-preview", "Gemini 3 Pro"),
+    # ── Budget ──
+    {
+        "id": "google/gemini-3.1-flash-lite-preview",
+        "label": "Gemini 3.1 Flash Lite (Google)",
+        "category": "Budget",
+        "manufacturer": "Google",
+        "description": "Lightweight Gemini model optimised for speed and cost",
+    },
+    {
+        "id": "openai/gpt-audio-mini",
+        "label": "GPT Audio Mini (OpenAI)",
+        "category": "Budget",
+        "manufacturer": "OpenAI",
+        "description": "Compact GPT audio model for cost-efficient transcription",
+    },
+    # ── Standard ──
+    {
+        "id": "google/gemini-3-flash-preview",
+        "label": "Gemini 3 Flash (Google)",
+        "category": "Standard",
+        "manufacturer": "Google",
+        "description": "Fast, capable Gemini model with strong audio understanding",
+    },
+    {
+        "id": "openai/gpt-audio",
+        "label": "GPT Audio (OpenAI)",
+        "category": "Standard",
+        "manufacturer": "OpenAI",
+        "description": "Full-size GPT audio model with high transcription accuracy",
+    },
+    {
+        "id": "openai/gpt-4o-audio-preview",
+        "label": "GPT-4o Audio Preview (OpenAI)",
+        "category": "Standard",
+        "manufacturer": "OpenAI",
+        "description": "GPT-4o with native audio input support",
+    },
+    {
+        "id": "xiaomi/mimo-v2-omni",
+        "label": "MiMo V2 Omni (Xiaomi)",
+        "category": "Standard",
+        "manufacturer": "Xiaomi",
+        "description": "Multimodal omni model with audio understanding",
+    },
+    {
+        "id": "mistralai/voxtral-small-24b-2507",
+        "label": "Voxtral Small (Mistral)",
+        "category": "Standard",
+        "manufacturer": "Mistral",
+        "description": "Mistral's 24B parameter audio-capable model",
+    },
+    {
+        "id": "openrouter/healer-alpha",
+        "label": "Healer Alpha (OpenRouter)",
+        "category": "Standard",
+        "manufacturer": "OpenRouter",
+        "description": "OpenRouter's own audio-capable model",
+    },
 ]
 
+# Default models
+DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
+DEFAULT_BUDGET_MODEL = "google/gemini-3.1-flash-lite-preview"
+
 # Review agent model (cheap, fast)
-REVIEW_MODEL = "gemini-3.1-flash-lite-preview"
+REVIEW_MODEL = "google/gemini-3.1-flash-lite-preview"
+
+
+def get_manufacturers(category: str = "") -> list[str]:
+    """Get unique manufacturer names, optionally filtered by category."""
+    seen = []
+    for m in MODELS:
+        if category and m["category"] != category:
+            continue
+        if m["manufacturer"] not in seen:
+            seen.append(m["manufacturer"])
+    return seen
+
+
+def get_models_for_manufacturer(manufacturer: str, category: str = "") -> list[dict]:
+    """Get models for a given manufacturer, optionally filtered by category."""
+    return [
+        m for m in MODELS
+        if m["manufacturer"] == manufacturer
+        and (not category or m["category"] == category)
+    ]
+
+
+def get_model_by_id(model_id: str) -> dict | None:
+    """Look up a model dict by its ID."""
+    for m in MODELS:
+        if m["id"] == model_id:
+            return m
+    return None
 
 # Format presets — kept simple, no complex templating
 # Each preset adds a short, targeted instruction to the cleanup prompt
@@ -342,8 +430,10 @@ class Config:
     """Application configuration — clean, no legacy cruft."""
 
     # API
-    gemini_api_key: str = ""
-    selected_model: str = "gemini-3.1-flash-lite-preview"
+    openrouter_api_key: str = ""
+    default_model: str = "google/gemini-3.1-flash-lite-preview"
+    default_budget_model: str = "google/gemini-3.1-flash-lite-preview"
+    active_model: str = ""  # Runtime override from main UI (empty = use default_model)
 
     # Transcription
     vad_enabled: bool = True
@@ -400,13 +490,19 @@ def load_config() -> Config:
                 setattr(config, key, value)
 
         # Env var always overrides saved key if set
-        env_key = os.environ.get("GEMINI_API_KEY", "")
+        env_key = os.environ.get("OPENROUTER_API_KEY", "")
         if env_key:
-            config.gemini_api_key = env_key
+            config.openrouter_api_key = env_key
 
-        # Migration: if old openrouter key exists in config, clear it
-        if not config.gemini_api_key and "openrouter_api_key" in data:
-            pass  # Can't reuse OpenRouter keys for Gemini
+        # Migration: accept old gemini_api_key from config/env
+        if not config.openrouter_api_key:
+            old_key = data.get("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+            if old_key:
+                config.openrouter_api_key = old_key
+
+        # Migration: old selected_model → default_model
+        if "selected_model" in data and "default_model" not in data:
+            config.default_model = data["selected_model"]
 
         return config
     except Exception:

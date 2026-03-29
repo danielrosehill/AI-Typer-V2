@@ -81,6 +81,25 @@ Access via **File → Settings** or **Ctrl+,**.
 
 Hotkeys work globally on Wayland via evdev (reads from input-remapper devices). Falls back to pynput/X11 on other systems.
 
+## Compatible Models
+
+AI Typer V2 works with any OpenRouter model that accepts audio input and produces text output. The following models are currently available with this modality:
+
+| Model | ID |
+|-------|----|
+| Xiaomi MiMo V2 Omni | `xiaomi/mimo-v2-omni` |
+| Gemini 3.1 Flash-Lite Preview | `google/gemini-3.1-flash-lite-preview` |
+| GPT Audio | `openai/gpt-audio` |
+| GPT Audio Mini | `openai/gpt-audio-mini` |
+| Gemini 3 Flash Preview | `google/gemini-3-flash-preview` |
+| Voxtral Small 24B | `mistralai/voxtral-small-24b-2507` |
+| GPT-4o Audio Preview | `openai/gpt-4o-audio-preview` |
+| Gemini 2.5 Flash-Lite | `google/gemini-2.5-flash-lite` |
+| Gemini 2.5 Flash | `google/gemini-2.5-flash` |
+| Healer Alpha | `openrouter/healer-alpha` |
+
+Browse the full list at [openrouter.ai/models](https://openrouter.ai/models?input_modalities=audio&output_modalities=text).
+
 ## Architecture
 
 ```

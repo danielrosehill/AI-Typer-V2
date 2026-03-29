@@ -32,9 +32,12 @@ from PyQt6.QtGui import QFont, QAction, QIcon
 
 from .config import (
     Config, load_config, save_config, build_cleanup_prompt,
-    FORMAT_PRESETS, TONE_PRESETS, MODELS, REVIEW_MODEL, REVIEW_PROMPT,
-    HOTKEY_OPTIONS, TRANSLATION_LANGUAGES, get_language_display_name,
+    FORMAT_PRESETS, TONE_PRESETS, MODELS, DEFAULT_MODEL, DEFAULT_BUDGET_MODEL,
+    REVIEW_MODEL, REVIEW_PROMPT, HOTKEY_OPTIONS, TRANSLATION_LANGUAGES,
+    get_language_display_name, get_manufacturers, get_models_for_manufacturer,
+    get_model_by_id,
 )
+from PyQt6.QtWidgets import QTabWidget
 from .audio_recorder import AudioRecorder
 from .audio_processor import prepare_audio_for_api, combine_wav_segments
 from .transcription import get_client
@@ -95,54 +98,124 @@ class TranscriptionWorker(QThread):
             self.error.emit(str(e))
 
 
+class _ModelPicker(QWidget):
+    """Cascading Provider → Model selector widget."""
+
+    def __init__(self, current_model_id: str, category_filter: str = "", parent=None):
+        super().__init__(parent)
+        self._category_filter = category_filter
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.provider_combo = QComboBox()
+        self.provider_combo.setMinimumWidth(120)
+        self.model_combo = QComboBox()
+        self.model_combo.setMinimumWidth(200)
+
+        layout.addWidget(self.provider_combo)
+        layout.addWidget(self.model_combo)
+
+        # Populate providers
+        for mfr in get_manufacturers(category_filter):
+            self.provider_combo.addItem(mfr, mfr)
+        self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+
+        # Set to current model's provider, then select the model
+        current = get_model_by_id(current_model_id)
+        if current:
+            idx = self.provider_combo.findData(current["manufacturer"])
+            if idx >= 0:
+                self.provider_combo.setCurrentIndex(idx)
+            self._on_provider_changed()
+            idx = self.model_combo.findData(current_model_id)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
+        else:
+            self._on_provider_changed()
+
+    def _on_provider_changed(self):
+        self.model_combo.clear()
+        mfr = self.provider_combo.currentData()
+        if not mfr:
+            return
+        for m in get_models_for_manufacturer(mfr, self._category_filter):
+            self.model_combo.addItem(m["label"], m["id"])
+
+    def selected_model_id(self) -> str:
+        return self.model_combo.currentData() or ""
+
+
 class SettingsDialog(QDialog):
-    """Simple settings dialog — just the essentials."""
+    """Tabbed settings dialog."""
 
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(500)
 
-        layout = QFormLayout(self)
-        layout.setSpacing(12)
+        outer = QVBoxLayout(self)
+        tabs = QTabWidget()
+        outer.addWidget(tabs)
+
+        # ── Tab 1: General ──
+        general = QWidget()
+        gl = QFormLayout(general)
+        gl.setSpacing(12)
 
         # API Key
-        self.api_key_edit = QLineEdit(config.gemini_api_key)
+        self.api_key_edit = QLineEdit(config.openrouter_api_key)
         self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_edit.setPlaceholderText("AIza...")
-        layout.addRow("Gemini API Key:", self.api_key_edit)
+        self.api_key_edit.setPlaceholderText("sk-or-...")
+        gl.addRow("OpenRouter API Key:", self.api_key_edit)
 
-        # Model
-        self.model_combo = QComboBox()
-        for model_id, display_name in MODELS:
-            self.model_combo.addItem(display_name, model_id)
-        idx = self.model_combo.findData(config.selected_model)
-        if idx >= 0:
-            self.model_combo.setCurrentIndex(idx)
-        layout.addRow("Model:", self.model_combo)
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        gl.addRow(sep)
 
-        # Separator
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.Shape.HLine)
-        layout.addRow(sep1)
+        # Default model (all models)
+        self.default_picker = _ModelPicker(config.default_model)
+        gl.addRow("Default model:", self.default_picker)
+
+        # Budget model (budget only)
+        self.budget_picker = _ModelPicker(config.default_budget_model, category_filter="Budget")
+        gl.addRow("Budget model:", self.budget_picker)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        gl.addRow(sep2)
 
         # Personalization
         self.user_name_edit = QLineEdit(config.user_name)
         self.user_name_edit.setPlaceholderText("Your name (for email sign-offs)")
-        layout.addRow("Name:", self.user_name_edit)
+        gl.addRow("Name:", self.user_name_edit)
 
         self.email_edit = QLineEdit(config.email_address)
         self.email_edit.setPlaceholderText("your@email.com")
-        layout.addRow("Email:", self.email_edit)
+        gl.addRow("Email:", self.email_edit)
 
         self.signature_edit = QLineEdit(config.email_signature)
-        layout.addRow("Sign-off:", self.signature_edit)
+        gl.addRow("Sign-off:", self.signature_edit)
 
-        # Separator
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        layout.addRow(sep2)
+        sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.HLine)
+        gl.addRow(sep3)
+
+        # Output modes
+        self.out_app = QCheckBox("Show in app")
+        self.out_app.setChecked(config.output_to_app)
+        self.out_clipboard = QCheckBox("Copy to clipboard")
+        self.out_clipboard.setChecked(config.output_to_clipboard)
+        self.out_inject = QCheckBox("Type at cursor (ydotool)")
+        self.out_inject.setChecked(config.output_to_inject)
+        gl.addRow("Output:", self.out_app)
+        gl.addRow("", self.out_clipboard)
+        gl.addRow("", self.out_inject)
+
+        tabs.addTab(general, "General")
+
+        # ── Tab 2: Advanced ──
+        advanced = QWidget()
+        al = QFormLayout(advanced)
+        al.setSpacing(12)
 
         # Features
         self.vad_check = QCheckBox("Voice Activity Detection (remove silence)")
@@ -150,16 +223,14 @@ class SettingsDialog(QDialog):
         if not is_vad_available():
             self.vad_check.setEnabled(False)
             self.vad_check.setToolTip("ten-vad not installed")
-        layout.addRow(self.vad_check)
+        al.addRow(self.vad_check)
 
         self.review_check = QCheckBox("Second-pass review (catches misheard words)")
         self.review_check.setChecked(config.review_enabled)
-        layout.addRow(self.review_check)
+        al.addRow(self.review_check)
 
-        # Separator
-        sep_trans = QFrame()
-        sep_trans.setFrameShape(QFrame.Shape.HLine)
-        layout.addRow(sep_trans)
+        sep4 = QFrame(); sep4.setFrameShape(QFrame.Shape.HLine)
+        al.addRow(sep4)
 
         # Translation
         self.translation_combo = QComboBox()
@@ -168,12 +239,7 @@ class SettingsDialog(QDialog):
         idx = self.translation_combo.findData(config.translation_target)
         if idx >= 0:
             self.translation_combo.setCurrentIndex(idx)
-        layout.addRow("Translate to:", self.translation_combo)
-
-        # Separator
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.Shape.HLine)
-        layout.addRow(sep3)
+        al.addRow("Translate to:", self.translation_combo)
 
         # Audio feedback
         self.feedback_combo = QComboBox()
@@ -183,30 +249,12 @@ class SettingsDialog(QDialog):
         idx = self.feedback_combo.findData(config.audio_feedback_mode)
         if idx >= 0:
             self.feedback_combo.setCurrentIndex(idx)
-        layout.addRow("Audio feedback:", self.feedback_combo)
+        al.addRow("Audio feedback:", self.feedback_combo)
 
-        # Separator
-        sep3b = QFrame()
-        sep3b.setFrameShape(QFrame.Shape.HLine)
-        layout.addRow(sep3b)
+        sep5 = QFrame(); sep5.setFrameShape(QFrame.Shape.HLine)
+        al.addRow(sep5)
 
-        # Output modes
-        self.out_app = QCheckBox("Show in app")
-        self.out_app.setChecked(config.output_to_app)
-        self.out_clipboard = QCheckBox("Copy to clipboard")
-        self.out_clipboard.setChecked(config.output_to_clipboard)
-        self.out_inject = QCheckBox("Type at cursor (ydotool)")
-        self.out_inject.setChecked(config.output_to_inject)
-        layout.addRow("Output:", self.out_app)
-        layout.addRow("", self.out_clipboard)
-        layout.addRow("", self.out_inject)
-
-        # Separator
-        sep4 = QFrame()
-        sep4.setFrameShape(QFrame.Shape.HLine)
-        layout.addRow(sep4)
-
-        # Hotkeys (dropdown selection)
+        # Hotkeys
         self.hotkey_toggle_combo = QComboBox()
         self.hotkey_tap_combo = QComboBox()
         self.hotkey_transcribe_combo = QComboBox()
@@ -230,9 +278,11 @@ class SettingsDialog(QDialog):
             idx = combo.findData(current_value)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
-            layout.addRow(label_text, combo)
+            al.addRow(label_text, combo)
 
-        # Buttons
+        tabs.addTab(advanced, "Advanced")
+
+        # ── Buttons ──
         btn_layout = QHBoxLayout()
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(self.accept)
@@ -241,12 +291,13 @@ class SettingsDialog(QDialog):
         btn_layout.addStretch()
         btn_layout.addWidget(cancel_btn)
         btn_layout.addWidget(save_btn)
-        layout.addRow(btn_layout)
+        outer.addLayout(btn_layout)
 
     def get_config(self) -> Config:
         """Return updated config from dialog values."""
-        self.config.gemini_api_key = self.api_key_edit.text().strip()
-        self.config.selected_model = self.model_combo.currentData()
+        self.config.openrouter_api_key = self.api_key_edit.text().strip()
+        self.config.default_model = self.default_picker.selected_model_id()
+        self.config.default_budget_model = self.budget_picker.selected_model_id()
         self.config.user_name = self.user_name_edit.text().strip()
         self.config.email_address = self.email_edit.text().strip()
         self.config.email_signature = self.signature_edit.text().strip()
@@ -298,7 +349,7 @@ class MainWindow(QMainWindow):
         self._connect_signals()
 
         # Check API key on startup
-        if not self.config.gemini_api_key:
+        if not self.config.openrouter_api_key:
             QTimer.singleShot(500, self._prompt_api_key)
 
     def _setup_ui(self):
@@ -360,10 +411,16 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.translation_label)
         self._update_translation_indicator()
 
-        # Model indicator
-        self.model_label = QLabel(self._model_display_name())
-        self.model_label.setStyleSheet("color: #666; font-size: 11px;")
-        controls.addWidget(self.model_label)
+        # Model selector (Default / Budget / individual models)
+        model_label = QLabel("Model:")
+        model_label.setStyleSheet("color: #888; font-size: 12px;")
+        controls.addWidget(model_label)
+
+        self.model_combo = QComboBox()
+        self.model_combo.setMinimumWidth(200)
+        self._populate_model_combo()
+        self.model_combo.currentIndexChanged.connect(self._on_model_changed)
+        controls.addWidget(self.model_combo)
 
         layout.addLayout(controls)
 
@@ -600,11 +657,63 @@ class MainWindow(QMainWindow):
             QPushButton:disabled {{ background-color: #ccc; color: #888; }}
         """
 
-    def _model_display_name(self) -> str:
-        for model_id, name in MODELS:
-            if model_id == self.config.selected_model:
-                return name
-        return self.config.selected_model
+    def _effective_model(self) -> str:
+        """Return the model ID that will actually be used for transcription."""
+        if self.config.active_model:
+            return self.config.active_model
+        return self.config.default_model
+
+    def _model_display_name(self, model_id: str = "") -> str:
+        model_id = model_id or self._effective_model()
+        m = get_model_by_id(model_id)
+        return m["label"] if m else model_id
+
+    def _populate_model_combo(self):
+        """Fill the main UI model combo with Default, Budget, then all models."""
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+
+        default_label = self._model_display_name(self.config.default_model)
+        budget_label = self._model_display_name(self.config.default_budget_model)
+        self.model_combo.addItem(f"Default ({default_label})", "__default__")
+        self.model_combo.addItem(f"Budget ({budget_label})", "__budget__")
+        self.model_combo.insertSeparator(self.model_combo.count())
+
+        # All models grouped by category
+        last_cat = None
+        for model in MODELS:
+            cat = model["category"]
+            if cat != last_cat and last_cat is not None:
+                self.model_combo.insertSeparator(self.model_combo.count())
+            if cat != last_cat:
+                self.model_combo.addItem(f"── {cat} ──")
+                self.model_combo.model().item(self.model_combo.count() - 1).setEnabled(False)
+            last_cat = cat
+            self.model_combo.addItem(f"  {model['label']}", model["id"])
+
+        # Select current
+        active = self.config.active_model
+        if not active or active == self.config.default_model:
+            self.model_combo.setCurrentIndex(0)  # Default
+        elif active == self.config.default_budget_model:
+            self.model_combo.setCurrentIndex(1)  # Budget
+        else:
+            idx = self.model_combo.findData(active)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
+            else:
+                self.model_combo.setCurrentIndex(0)
+
+        self.model_combo.blockSignals(False)
+
+    def _on_model_changed(self):
+        data = self.model_combo.currentData()
+        if data == "__default__":
+            self.config.active_model = ""
+        elif data == "__budget__":
+            self.config.active_model = self.config.default_budget_model
+        elif data:
+            self.config.active_model = data
 
     def _setup_tray(self):
         """Set up system tray icon with context menu."""
@@ -908,8 +1017,8 @@ class MainWindow(QMainWindow):
     # ── Transcription ──
 
     def _transcribe(self, audio_data: bytes):
-        if not self.config.gemini_api_key:
-            self.status_label.setText("No Gemini API key — open Settings")
+        if not self.config.openrouter_api_key:
+            self.status_label.setText("No OpenRouter API key — open Settings")
             return
 
         self.status_label.setText("Processing audio...")
@@ -923,8 +1032,8 @@ class MainWindow(QMainWindow):
 
         # Audio processing + transcription both run in background thread
         self.worker = TranscriptionWorker(
-            api_key=self.config.gemini_api_key,
-            model=self.config.selected_model,
+            api_key=self.config.openrouter_api_key,
+            model=self._effective_model(),
             raw_audio_data=audio_data,
             prompt=prompt,
             review_enabled=self.config.review_enabled,
@@ -1079,7 +1188,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.config = dialog.get_config()
             save_config(self.config)
-            self.model_label.setText(self._model_display_name())
+            self._populate_model_combo()
             self._update_translation_indicator()
             self._setup_hotkeys()
 
@@ -1088,8 +1197,8 @@ class MainWindow(QMainWindow):
         msg = QMessageBox(self)
         msg.setWindowTitle("API Key Required")
         msg.setText(
-            "No Gemini API key found.\n\n"
-            "You need an API key from ai.google.dev to use AI Typer.\n"
+            "No OpenRouter API key found.\n\n"
+            "You need an API key from openrouter.ai to use AI Typer.\n"
             "Open Settings to configure it."
         )
         msg.addButton("Open Settings", QMessageBox.ButtonRole.AcceptRole)
