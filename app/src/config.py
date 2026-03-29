@@ -1,8 +1,10 @@
-"""Configuration for AI Typer V2."""
+"""Configuration for Multimodal Voice Typer."""
 
 import json
 import os
 from pathlib import Path
+
+APP_VERSION = "0.3.0"
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -460,7 +462,7 @@ class Config:
     audio_feedback_mode: str = "beeps"
 
     # Hotkeys
-    hotkey_toggle: str = "f15"         # Start/stop+transcribe
+    hotkey_toggle: str = "f13"         # Start/stop+transcribe
     hotkey_tap_toggle: str = "f16"     # Start/stop+cache (append workflow)
     hotkey_transcribe: str = "f17"     # Transcribe cached audio
     hotkey_clear: str = "f18"          # Clear recording and cache

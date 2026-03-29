@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI Typer V2 — Voice dictation with multimodal AI cleanup.
+"""Multimodal Voice Typer — Voice dictation with multimodal AI cleanup.
 
 Single-window UI: record, transcribe, done. Format detection is automatic.
 """
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QTextEdit, QComboBox, QLabel, QDialog, QFormLayout,
     QLineEdit, QCheckBox, QMessageBox, QFrame, QSizePolicy,
     QListWidget, QListWidgetItem, QSplitter, QSystemTrayIcon, QMenu,
+    QTableWidget, QTableWidgetItem, QHeaderView,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QAction, QIcon
@@ -35,7 +36,7 @@ from .config import (
     FORMAT_PRESETS, TONE_PRESETS, MODELS, DEFAULT_MODEL, DEFAULT_BUDGET_MODEL,
     REVIEW_MODEL, REVIEW_PROMPT, HOTKEY_OPTIONS, TRANSLATION_LANGUAGES,
     get_language_display_name, get_manufacturers, get_models_for_manufacturer,
-    get_model_by_id,
+    get_model_by_id, APP_VERSION,
 )
 from PyQt6.QtWidgets import QTabWidget
 from .audio_recorder import AudioRecorder
@@ -353,7 +354,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(500, self._prompt_api_key)
 
     def _setup_ui(self):
-        self.setWindowTitle("AI Typer V2")
+        self.setWindowTitle("Multimodal Voice Typer")
         self.resize(self.config.window_width, self.config.window_height)
 
         central = QWidget()
@@ -604,6 +605,12 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(status_bar)
 
+        # ── Subtitle ──
+        subtitle = QLabel("Multimodal AI transcription and reformatting with OpenRouter API")
+        subtitle.setStyleSheet("color: #888; font-size: 10px; font-style: italic;")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(subtitle)
+
         # ── Menu bar ──
         menu = self.menuBar()
         file_menu = menu.addMenu("&File")
@@ -619,6 +626,15 @@ class MainWindow(QMainWindow):
         quit_action.setShortcut("Ctrl+Q")
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
+
+        help_menu = menu.addMenu("&Help")
+        models_action = QAction("&Supported Models...", self)
+        models_action.triggered.connect(self._show_models_info)
+        help_menu.addAction(models_action)
+        help_menu.addSeparator()
+        about_action = QAction("&About...", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
 
     def _record_btn_style(self, recording: bool) -> str:
         if recording:
@@ -748,7 +764,7 @@ class MainWindow(QMainWindow):
         tray_menu.addAction("Quit", self.close)
         self.tray.setContextMenu(tray_menu)
         self.tray.activated.connect(self._on_tray_activated)
-        self.tray.setToolTip("AI Typer V2 — Ready")
+        self.tray.setToolTip("Multimodal Voice Typer — Ready")
         self.tray.show()
 
     def _update_tray_state(self, state: str):
@@ -756,25 +772,25 @@ class MainWindow(QMainWindow):
         self._tray_state = state
         if state == "idle":
             self.tray.setIcon(self._tray_icon_idle)
-            self.tray.setToolTip("AI Typer V2 — Ready")
+            self.tray.setToolTip("Multimodal Voice Typer — Ready")
             self._tray_record_action.setText("Record")
         elif state == "recording":
             self.tray.setIcon(self._tray_icon_recording)
-            self.tray.setToolTip("AI Typer V2 — Recording...")
+            self.tray.setToolTip("Multimodal Voice Typer — Recording...")
             self._tray_record_action.setText("Stop + Transcribe")
         elif state == "transcribing":
             self.tray.setIcon(self._tray_icon_transcribing)
-            self.tray.setToolTip("AI Typer V2 — Transcribing...")
+            self.tray.setToolTip("Multimodal Voice Typer — Transcribing...")
         elif state == "complete":
             self.tray.setIcon(self._tray_icon_complete)
-            self.tray.setToolTip("AI Typer V2 — Done")
+            self.tray.setToolTip("Multimodal Voice Typer — Done")
             # Revert to idle after 3 seconds
             QTimer.singleShot(3000, lambda: self._update_tray_state("idle")
                               if self._tray_state == "complete" else None)
         elif state == "cached":
             self.tray.setIcon(self._tray_icon_idle)
             n = len(self._cached_segments)
-            self.tray.setToolTip(f"AI Typer V2 — {n} segment{'s' if n != 1 else ''} cached")
+            self.tray.setToolTip(f"Multimodal Voice Typer — {n} segment{'s' if n != 1 else ''} cached")
             self._tray_record_action.setText("Record")
         self._tray_transcribe_action.setEnabled(bool(self._cached_segments))
 
@@ -896,6 +912,8 @@ class MainWindow(QMainWindow):
         # Play feedback BEFORE starting recording (so mic doesn't capture it)
         self._audio_feedback("play_start", "announce_recording")
         if self.recorder.start_recording():
+            self.text_edit.clear()
+            self._raw_text = ""
             self.record_btn.setText("\u23f9  Transcribe")
             self.record_btn.setStyleSheet(self._record_btn_style(True))
             self.pause_btn.setEnabled(True)
@@ -1183,6 +1201,78 @@ class MainWindow(QMainWindow):
         self.history_list.clear()
         self.status_label.setText("History cleared")
 
+    def _show_models_info(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Supported Models")
+        dialog.setMinimumSize(750, 450)
+        layout = QVBoxLayout(dialog)
+
+        intro = QLabel(
+            "<p>All models are accessed via the <a href='https://openrouter.ai'>OpenRouter API</a>. "
+            "Pricing is approximate and may change — check OpenRouter for current rates.</p>"
+        )
+        intro.setOpenExternalLinks(True)
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        approx_costs = {
+            "google/gemini-3.1-flash-lite-preview": "~$0.02/M",
+            "openai/gpt-audio-mini": "~$0.40/M",
+            "google/gemini-3-flash-preview": "~$0.10/M",
+            "openai/gpt-audio": "~$2.50/M",
+            "openai/gpt-4o-audio-preview": "~$2.50/M",
+            "xiaomi/mimo-v2-omni": "~$0.27/M",
+            "mistralai/voxtral-small-24b-2507": "~$0.40/M",
+            "openrouter/healer-alpha": "~$0.10/M",
+        }
+
+        for category in ["Budget", "Standard"]:
+            cat_label = QLabel(f"<h3>{category} Tier</h3>")
+            layout.addWidget(cat_label)
+
+            models_in_cat = [m for m in MODELS if m["category"] == category]
+            table = QTableWidget(len(models_in_cat), 4)
+            table.setHorizontalHeaderLabels(["Model", "Provider", "Description", "Cost (input)"])
+            table.horizontalHeader().setStretchLastSection(False)
+            table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+            table.verticalHeader().setVisible(False)
+            table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+            table.setAlternatingRowColors(True)
+
+            for row, m in enumerate(models_in_cat):
+                table.setItem(row, 0, QTableWidgetItem(m["label"].split(" (")[0]))
+                table.setItem(row, 1, QTableWidgetItem(m["manufacturer"]))
+                table.setItem(row, 2, QTableWidgetItem(m["description"]))
+                table.setItem(row, 3, QTableWidgetItem(approx_costs.get(m["id"], "—")))
+
+            table.setMaximumHeight(36 + len(models_in_cat) * 30)
+            layout.addWidget(table)
+
+        layout.addStretch()
+
+        note = QLabel("<i>Costs shown are approximate input token prices. Audio tokens vary by model and encoding.</i>")
+        note.setStyleSheet("color: #888; font-size: 10px;")
+        layout.addWidget(note)
+
+        dialog.exec()
+
+    def _show_about(self):
+        QMessageBox.about(
+            self,
+            "About Multimodal Voice Typer",
+            f"<h3>Multimodal Voice Typer</h3>"
+            f"<p>Version {APP_VERSION}</p>"
+            f"<p><i>Multimodal AI transcription and reformatting with OpenRouter API</i></p>"
+            f"<p>Voice dictation powered by multimodal AI models. "
+            f"Audio is sent directly to audio-capable models which handle "
+            f"both transcription and text cleanup in a single pass.</p>"
+            f"<p><a href='https://openrouter.ai'>openrouter.ai</a></p>",
+        )
+
     def _open_settings(self):
         dialog = SettingsDialog(self.config, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1198,7 +1288,7 @@ class MainWindow(QMainWindow):
         msg.setWindowTitle("API Key Required")
         msg.setText(
             "No OpenRouter API key found.\n\n"
-            "You need an API key from openrouter.ai to use AI Typer.\n"
+            "You need an API key from openrouter.ai to use Multimodal Voice Typer.\n"
             "Open Settings to configure it."
         )
         msg.addButton("Open Settings", QMessageBox.ButtonRole.AcceptRole)
@@ -1222,7 +1312,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("AI Typer V2")
+    app.setApplicationName("Multimodal Voice Typer")
 
     window = MainWindow()
     window.show()

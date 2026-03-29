@@ -70,7 +70,7 @@ LAUNCHER
     # Desktop entry
     cat > "$BUILD_DIR/usr/share/applications/${PKG_NAME}.desktop" << EOF
 [Desktop Entry]
-Name=AI Typer V2
+Name=Multimodal Voice Typer
 Comment=Voice dictation with multimodal AI cleanup
 Exec=${PKG_NAME}
 Terminal=false
