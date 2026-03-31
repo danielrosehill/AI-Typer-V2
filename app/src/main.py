@@ -495,7 +495,13 @@ class MainWindow(QMainWindow):
         self.record_btn.clicked.connect(self._toggle_recording)
         rec_bar.addWidget(self.record_btn)
 
-        # Pause button (always visible, disabled when not recording)
+        # Duration label — right next to Record button
+        self.duration_label = QLabel("")
+        self.duration_label.setStyleSheet("color: #dc3545; font-size: 14px; font-family: monospace; font-weight: bold;")
+        self.duration_label.setMinimumWidth(50)
+        rec_bar.addWidget(self.duration_label)
+
+        # Pause button (enabled when recording)
         self.pause_btn = QPushButton("\u23f8  Pause")
         self.pause_btn.setMinimumHeight(36)
         self.pause_btn.setMinimumWidth(80)
@@ -504,7 +510,7 @@ class MainWindow(QMainWindow):
         self.pause_btn.setEnabled(False)
         rec_bar.addWidget(self.pause_btn)
 
-        # Stop button (always visible, disabled when not recording)
+        # Stop button (cache without transcribing)
         self.stop_btn = QPushButton("\u23f9  Stop")
         self.stop_btn.setMinimumHeight(36)
         self.stop_btn.setMinimumWidth(80)
@@ -513,7 +519,17 @@ class MainWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         rec_bar.addWidget(self.stop_btn)
 
-        # Retake button (visible when recording — discard + restart)
+        # Delete button (discard recording and go idle — no retake)
+        self.delete_btn = QPushButton("\U0001f5d1  Delete")
+        self.delete_btn.setMinimumHeight(36)
+        self.delete_btn.setMinimumWidth(80)
+        self.delete_btn.setStyleSheet(self._secondary_btn_style("#dc3545", "white", "#c82333"))
+        self.delete_btn.setToolTip("Discard current recording")
+        self.delete_btn.clicked.connect(self._delete_recording)
+        self.delete_btn.setEnabled(False)
+        rec_bar.addWidget(self.delete_btn)
+
+        # Retake button (discard + restart)
         self.retake_btn = QPushButton("\u21bb  Retake")
         self.retake_btn.setMinimumHeight(36)
         self.retake_btn.setMinimumWidth(80)
@@ -544,12 +560,6 @@ class MainWindow(QMainWindow):
         self.segment_label = QLabel("")
         self.segment_label.setStyleSheet("color: #6c757d; font-weight: bold; font-size: 11px;")
         rec_bar.addWidget(self.segment_label)
-
-        # Duration label
-        self.duration_label = QLabel("")
-        self.duration_label.setStyleSheet("color: #888; font-size: 13px; font-family: monospace;")
-        self.duration_label.setMinimumWidth(50)
-        rec_bar.addWidget(self.duration_label)
 
         rec_bar.addStretch()
 
@@ -596,12 +606,18 @@ class MainWindow(QMainWindow):
         status_bar.addWidget(self.status_label)
         status_bar.addStretch()
 
-        # Beeps indicator (clickable toggle)
-        self.beep_label = QLabel("")
-        self.beep_label.setStyleSheet("color: #888; font-size: 11px; cursor: pointer;")
-        self.beep_label.setToolTip("Click to cycle: Beeps → Voice → Silent")
-        self.beep_label.mousePressEvent = lambda e: self._cycle_audio_feedback()
-        status_bar.addWidget(self.beep_label)
+        # Audio mode toggle button
+        self.beep_btn = QPushButton("")
+        self.beep_btn.setFixedHeight(22)
+        self.beep_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 2px 10px; border: 1px solid #aaa; "
+            "border-radius: 4px; background: #f0f0f0; color: #555; }"
+            "QPushButton:hover { background: #e0e0e0; border-color: #888; }"
+        )
+        self.beep_btn.setToolTip("Click to cycle: Beeps → Voice → Silent")
+        self.beep_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.beep_btn.clicked.connect(self._cycle_audio_feedback)
+        status_bar.addWidget(self.beep_btn)
         self._update_beep_indicator()
 
         layout.addLayout(status_bar)
@@ -685,15 +701,26 @@ class MainWindow(QMainWindow):
         m = get_model_by_id(model_id)
         return m["label"] if m else model_id
 
+    def _short_model_name(self, model_id: str) -> str:
+        """Model name without the vendor in parentheses, e.g. 'Gemini 3.1 Flash Lite'."""
+        m = get_model_by_id(model_id)
+        if not m:
+            return model_id
+        label = m["label"]
+        # Strip trailing " (Vendor)" suffix
+        if "(" in label:
+            label = label[:label.rfind("(")].strip()
+        return label
+
     def _populate_model_combo(self):
         """Fill the main UI model combo with Default, Budget, then all models."""
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
 
-        default_label = self._model_display_name(self.config.default_model)
-        budget_label = self._model_display_name(self.config.default_budget_model)
-        self.model_combo.addItem(f"Default ({default_label})", "__default__")
-        self.model_combo.addItem(f"Budget ({budget_label})", "__budget__")
+        default_name = self._short_model_name(self.config.default_model)
+        budget_name = self._short_model_name(self.config.default_budget_model)
+        self.model_combo.addItem(default_name, "__default__")
+        self.model_combo.addItem(f"Budget: {budget_name}", "__budget__")
         self.model_combo.insertSeparator(self.model_combo.count())
 
         # All models grouped by category
@@ -706,7 +733,8 @@ class MainWindow(QMainWindow):
                 self.model_combo.addItem(f"── {cat} ──")
                 self.model_combo.model().item(self.model_combo.count() - 1).setEnabled(False)
             last_cat = cat
-            self.model_combo.addItem(f"  {model['label']}", model["id"])
+            short = self._short_model_name(model["id"])
+            self.model_combo.addItem(f"  {short}", model["id"])
 
         # Select current
         active = self.config.active_model
@@ -925,6 +953,7 @@ class MainWindow(QMainWindow):
             self.pause_btn.setEnabled(True)
             self.pause_btn.setText("\u23f8  Pause")
             self.stop_btn.setEnabled(True)
+            self.delete_btn.setEnabled(True)
             self.retake_btn.setEnabled(True)
             self.transcribe_btn.setVisible(False)
             self.status_label.setText("Recording...")
@@ -970,6 +999,7 @@ class MainWindow(QMainWindow):
         self.pause_btn.setText("\u23f8  Pause")
         self.pause_btn.setEnabled(False)
         self.stop_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
         self.retake_btn.setEnabled(False)
 
     def _tap_toggle(self):
@@ -1018,6 +1048,17 @@ class MainWindow(QMainWindow):
         self._audio_feedback("play_clear", "announce_cleared")
         self.status_label.setText("Retake...")
         self._start_recording()
+
+    def _delete_recording(self):
+        """Discard current recording and return to idle (no restart)."""
+        if self.recorder.is_recording:
+            self._duration_timer.stop()
+            self.recorder.stop_recording()
+        self._reset_record_buttons()
+        self._audio_feedback("play_clear", "announce_discarded")
+        self.duration_label.setText("")
+        self.status_label.setText("Deleted")
+        self._update_tray_state("idle")
 
     def _clear_recording(self):
         """Clear current recording and cache."""
@@ -1197,11 +1238,11 @@ class MainWindow(QMainWindow):
         """Update the audio feedback indicator in status bar."""
         mode = self.config.audio_feedback_mode
         if mode == "beeps":
-            self.beep_label.setText("\U0001f514 Beeps")
+            self.beep_btn.setText("\U0001f514 Beeps")
         elif mode == "tts":
-            self.beep_label.setText("\U0001f50a Voice")
+            self.beep_btn.setText("\U0001f50a Voice")
         else:
-            self.beep_label.setText("\U0001f507 Silent")
+            self.beep_btn.setText("\U0001f507 Silent")
 
     # ── History ──
 

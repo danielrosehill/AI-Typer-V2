@@ -89,6 +89,19 @@ def _silence_bytes(duration_ms: float) -> bytes:
     return b'\x00\x00' * int(SAMPLE_RATE * duration_ms / 1000)
 
 
+def _attenuate(pcm_data: bytes, volume: float) -> bytes:
+    """Scale 16-bit signed PCM data by a volume factor (0.0–1.0)."""
+    if volume >= 1.0 or not pcm_data:
+        return pcm_data
+    out = []
+    for i in range(0, len(pcm_data) - 1, 2):
+        sample = struct.unpack('<h', pcm_data[i:i+2])[0]
+        sample = int(sample * volume)
+        sample = max(-32767, min(32767, sample))
+        out.append(struct.pack('<h', sample))
+    return b''.join(out)
+
+
 def generate_beep(frequency: float = 880, duration_ms: int = 60, volume: float = 0.18) -> bytes:
     data = _load_wav_pcm("ptt-send.wav")
     if data:
@@ -196,7 +209,8 @@ class AudioFeedback:
 
     def __init__(self):
         self._enabled = True
-        self._start_beep = _load_wav_pcm("ptt-send.wav") or generate_ptt_click_chirp()
+        # Start beep softened to 45% volume — original was too jarring
+        self._start_beep = _attenuate(_load_wav_pcm("ptt-send.wav") or generate_ptt_click_chirp(), 0.45)
         self._stop_beep = _load_wav_pcm("stop.wav") or generate_ptt_release()
         self._clipboard_beep = generate_double_click()
         self._toggle_on_beep = generate_rising_chirp()
@@ -206,7 +220,7 @@ class AudioFeedback:
         self._pause_beep = _load_wav_pcm("pause.wav") or generate_double_click()
         self._resume_beep = _load_wav_pcm("resume.wav") or generate_rising_chirp()
         self._clear_beep = _load_wav_pcm("clear.wav") or generate_falling_chirp()
-        self._transcribe_beep = _load_wav_pcm("transcribe.wav") or generate_rising_chirp()
+        self._transcribe_beep = _attenuate(_load_wav_pcm("transcribe.wav") or generate_rising_chirp(), 0.5)
 
     @property
     def enabled(self) -> bool:
