@@ -724,35 +724,40 @@ class MainWindow(QMainWindow):
 
         default_name = self._short_model_name(self.config.default_model)
         budget_name = self._short_model_name(self.config.default_budget_model)
-        self.model_combo.addItem(default_name, "__default__")
-        self.model_combo.addItem(f"Budget: {budget_name}", "__budget__")
+
+        # Defaults header
+        self.model_combo.addItem("── Defaults ──")
+        self.model_combo.model().item(self.model_combo.count() - 1).setEnabled(False)
+        self.model_combo.addItem(f"  {default_name}", "__default__")
+        self.model_combo.addItem(f"  Budget: {budget_name}", "__budget__")
         self.model_combo.insertSeparator(self.model_combo.count())
 
-        # All models grouped by category
-        last_cat = None
-        for model in MODELS:
-            cat = model["category"]
-            if cat != last_cat and last_cat is not None:
-                self.model_combo.insertSeparator(self.model_combo.count())
-            if cat != last_cat:
-                self.model_combo.addItem(f"── {cat} ──")
-                self.model_combo.model().item(self.model_combo.count() - 1).setEnabled(False)
-            last_cat = cat
-            short = self._short_model_name(model["id"])
-            self.model_combo.addItem(f"  {short}", model["id"])
+        # All models: Standard first, then Budget
+        for cat in ["Standard", "Budget"]:
+            models_in_cat = [m for m in MODELS if m["category"] == cat]
+            if not models_in_cat:
+                continue
+            self.model_combo.addItem(f"── {cat} ──")
+            self.model_combo.model().item(self.model_combo.count() - 1).setEnabled(False)
+            for model in models_in_cat:
+                short = self._short_model_name(model["id"])
+                self.model_combo.addItem(f"  {short}", model["id"])
+            self.model_combo.insertSeparator(self.model_combo.count())
 
         # Select current
         active = self.config.active_model
+        default_idx = self.model_combo.findData("__default__")
+        budget_idx = self.model_combo.findData("__budget__")
         if not active or active == self.config.default_model:
-            self.model_combo.setCurrentIndex(0)  # Default
+            self.model_combo.setCurrentIndex(default_idx)
         elif active == self.config.default_budget_model:
-            self.model_combo.setCurrentIndex(1)  # Budget
+            self.model_combo.setCurrentIndex(budget_idx)
         else:
             idx = self.model_combo.findData(active)
             if idx >= 0:
                 self.model_combo.setCurrentIndex(idx)
             else:
-                self.model_combo.setCurrentIndex(0)
+                self.model_combo.setCurrentIndex(default_idx)
 
         self.model_combo.blockSignals(False)
 
