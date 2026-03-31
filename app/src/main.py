@@ -341,6 +341,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self._cached_segments: list[bytes] = []
         self._raw_text: str = ""  # Raw markdown text (for clipboard/append)
+        self._append_mode: bool = False  # When True, transcription appends to existing text
         self._history = TranscriptionHistory(max_items=20)
         self._duration_timer = QTimer()
         self._duration_timer.timeout.connect(self._update_duration)
@@ -556,6 +557,16 @@ class MainWindow(QMainWindow):
         self.discard_btn.setVisible(False)
         rec_bar.addWidget(self.discard_btn)
 
+        # Append button (visible after transcription — record more and append)
+        self.append_btn = QPushButton("\u2795  Append")
+        self.append_btn.setMinimumHeight(36)
+        self.append_btn.setMinimumWidth(90)
+        self.append_btn.setStyleSheet(self._secondary_btn_style("#17a2b8", "white", "#138496"))
+        self.append_btn.setToolTip("Record more and append to existing text")
+        self.append_btn.clicked.connect(self._start_append_recording)
+        self.append_btn.setVisible(False)
+        rec_bar.addWidget(self.append_btn)
+
         # Segment indicator label
         self.segment_label = QLabel("")
         self.segment_label.setStyleSheet("color: #6c757d; font-weight: bold; font-size: 11px;")
@@ -621,12 +632,6 @@ class MainWindow(QMainWindow):
         self._update_beep_indicator()
 
         layout.addLayout(status_bar)
-
-        # ── Subtitle ──
-        subtitle = QLabel("Multimodal AI transcription and reformatting with OpenRouter API")
-        subtitle.setStyleSheet("color: #888; font-size: 10px; font-style: italic;")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(subtitle)
 
         # ── Menu bar ──
         menu = self.menuBar()
@@ -933,6 +938,7 @@ class MainWindow(QMainWindow):
         if self.recorder.is_recording:
             self._stop_and_transcribe()
         else:
+            self._append_mode = False
             self._start_recording()
 
     def _start_recording(self):
@@ -946,8 +952,10 @@ class MainWindow(QMainWindow):
         if self.recorder.is_recording:
             return
         if self.recorder.start_recording():
-            self.text_edit.clear()
-            self._raw_text = ""
+            if not self._append_mode:
+                self.text_edit.clear()
+                self._raw_text = ""
+            self.append_btn.setVisible(False)
             self.record_btn.setText("\u23f9  Transcribe")
             self.record_btn.setStyleSheet(self._record_btn_style(True))
             self.pause_btn.setEnabled(True)
@@ -1022,6 +1030,11 @@ class MainWindow(QMainWindow):
 
     def _start_append(self):
         """Start a new recording segment to append to cache."""
+        self._start_append_recording()
+
+    def _start_append_recording(self):
+        """Start recording in append mode — new transcription appends to existing text."""
+        self._append_mode = True
         self._start_recording()
 
     def _pause_resume(self):
@@ -1119,22 +1132,32 @@ class MainWindow(QMainWindow):
                           format_preset=self.config.format_preset)
         self._refresh_history_list()
 
-        if self.config.output_to_app:
-            # Replace previous transcript — each transcription is a fresh job
+        # Append mode: join new text after existing with a blank line
+        if self._append_mode and self._raw_text.strip():
+            combined = self._raw_text.rstrip() + "\n\n" + text.lstrip()
+            self._raw_text = combined
+            self._append_mode = False
+        else:
             self._raw_text = text
+            self._append_mode = False
+
+        if self.config.output_to_app:
             self.text_edit.setMarkdown(self._raw_text)
-            # Scroll to bottom
             cursor = self.text_edit.textCursor()
             cursor.movePosition(cursor.MoveOperation.End)
             self.text_edit.setTextCursor(cursor)
 
+        # Show Append button whenever there's text
+        self.append_btn.setVisible(bool(self._raw_text.strip()))
+
+        output_text = self._raw_text
+
         if self.config.output_to_clipboard:
-            copy_to_clipboard(text)
-            # Play clipboard sound after the completion ding
+            copy_to_clipboard(output_text)
             self._play_beep("play_clipboard")
 
         if self.config.output_to_inject:
-            self._inject_text(text)
+            self._inject_text(output_text)
 
         # Status
         parts = [f"Done in {elapsed:.1f}s"]
@@ -1208,6 +1231,7 @@ class MainWindow(QMainWindow):
     def _clear_text(self):
         self._raw_text = ""
         self.text_edit.clear()
+        self.append_btn.setVisible(False)
         self.status_label.setText("Cleared")
 
     def _on_format_changed(self):

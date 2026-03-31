@@ -32,8 +32,7 @@ def normalize_paragraph_spacing(text: str) -> str:
     """Ensure blank lines between paragraphs.
 
     LLMs often use single newlines where they intended paragraph breaks.
-    If a line ends with terminal punctuation and the next starts with a
-    capital letter, insert a blank line between them.
+    This function detects paragraph boundaries and inserts blank lines.
     """
     if not text or "\n" not in text:
         return text
@@ -50,14 +49,29 @@ def normalize_paragraph_spacing(text: str) -> str:
             result.append(lines[i])
             continue
 
-        # Skip normalization for list items, headings, code blocks
-        if curr.startswith(("-", "*", "#", ">", "`", "1", "2", "3", "4", "5", "6", "7", "8", "9")):
+        # Current line is a list item, heading, or code block — keep as-is
+        if curr.startswith(("-", "*", "#", ">", "`")):
+            result.append(lines[i])
+            continue
+        # Numbered list items
+        if len(curr) > 1 and curr[0].isdigit() and curr[1] in ".)":
             result.append(lines[i])
             continue
 
-        # Prev line ends with sentence-ending punctuation, next starts uppercase
-        if prev[-1] in ".?!\"'" and curr[0].isupper():
-            result.append("")  # Insert blank line
+        needs_break = False
+
+        # Previous line is a heading (markdown # or short standalone line)
+        if prev.startswith("#"):
+            needs_break = True
+        # Short previous line (title/heading-like) followed by longer content
+        elif len(prev) < 60 and len(curr) > 60 and not prev[-1] in ",;:":
+            needs_break = True
+        # Previous line ends with terminal punctuation, next starts uppercase
+        elif prev[-1] in ".?!\"')" and curr[0].isupper():
+            needs_break = True
+
+        if needs_break:
+            result.append("")
             result.append(lines[i])
         else:
             result.append(lines[i])
