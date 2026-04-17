@@ -4,15 +4,104 @@ import base64
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Callable, Iterator, Optional
 
 import requests
 
+
+class TranscriptionError(Exception):
+    """Raised when transcription fails in a user-actionable way.
+
+    hint: short guidance string (e.g. "Check API key" or "Network error").
+    """
+
+    def __init__(self, message: str, hint: str = ""):
+        super().__init__(message)
+        self.hint = hint
+
+
+def _classify_error(exc: Exception) -> tuple[bool, str]:
+    """Return (is_retryable, hint) for a requests exception."""
+    if isinstance(exc, requests.exceptions.Timeout):
+        return True, "Request timed out — retrying"
+    if isinstance(exc, requests.exceptions.ConnectionError):
+        return True, "Network error — check internet connection"
+    if isinstance(exc, requests.exceptions.HTTPError):
+        status = exc.response.status_code if exc.response is not None else 0
+        if status in (401, 403):
+            return False, "Auth failed — check API key in Settings"
+        if status == 402:
+            return False, "Out of credits — top up at openrouter.ai"
+        if status == 429:
+            return True, "Rate limited — retrying"
+        if 500 <= status < 600:
+            return True, "Server error — retrying"
+        return False, f"HTTP {status}"
+    return False, ""
+
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
+OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
+OPENROUTER_ACTIVITY_URL = "https://openrouter.ai/api/v1/activity"
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
+
+
+def get_openrouter_credits(api_key: str, timeout: float = 8.0) -> dict:
+    """Fetch OpenRouter credit usage/remaining for the given key.
+
+    Returns the `data` payload: {total_credits, total_usage, ...}. Raises on
+    HTTP error.
+    """
+    response = requests.get(
+        OPENROUTER_CREDITS_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json().get("data", {})
+
+
+def get_openrouter_activity(api_key: str, timeout: float = 10.0) -> list:
+    """Fetch daily activity (usage per day) for the given key.
+
+    Returns a list of daily records — each typically has a `date` field and a
+    `usage` (spend in USD). OpenRouter returns up to the last ~30-60 days.
+    Raises on HTTP error (including 401/403 if the key lacks permission).
+    """
+    response = requests.get(
+        OPENROUTER_ACTIVITY_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data", payload)
+    if isinstance(data, dict):
+        # Some shapes wrap the list under `data.activity` or similar.
+        for key in ("activity", "days", "items", "results"):
+            if isinstance(data.get(key), list):
+                return data[key]
+        return []
+    return data if isinstance(data, list) else []
+
+
+def get_openrouter_key_info(api_key: str, timeout: float = 8.0) -> dict:
+    """Fetch per-key usage info from OpenRouter.
+
+    Returns the `data` payload: {label, usage, limit, is_free_tier, ...}. Unlike
+    /api/v1/credits (which is account-wide), this scopes usage to the API key.
+    """
+    response = requests.get(
+        OPENROUTER_KEY_URL,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response.json().get("data", {})
 
 # Patterns that match AI preamble lines (case-insensitive).
 _PREAMBLE_PATTERNS = [
@@ -162,13 +251,31 @@ class OpenRouterClient:
         return payload
 
     def transcribe(self, audio_data: bytes, prompt: str,
-                   audio_format: str = "mp3") -> TranscriptionResult:
+                   audio_format: str = "mp3",
+                   on_retry: Optional[Callable[[int, str], None]] = None
+                   ) -> TranscriptionResult:
         """Transcribe audio using OpenRouter multimodal model (non-streaming)."""
         payload = self._build_audio_payload(audio_data, prompt, audio_format)
-
         session = self._get_session()
-        response = session.post(self.api_url, json=payload, timeout=120)
-        response.raise_for_status()
+
+        attempts = 3
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                response = session.post(self.api_url, json=payload, timeout=120)
+                response.raise_for_status()
+                break
+            except requests.exceptions.RequestException as e:
+                last_exc = e
+                retryable, hint = _classify_error(e)
+                if not retryable or attempt == attempts:
+                    raise TranscriptionError(str(e), hint=hint) from e
+                if on_retry:
+                    try:
+                        on_retry(attempt, hint)
+                    except Exception:
+                        pass
+                time.sleep(0.5 * (2 ** (attempt - 1)))
         data = response.json()
 
         text = data["choices"][0]["message"]["content"]

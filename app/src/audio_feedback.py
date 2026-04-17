@@ -204,23 +204,51 @@ def generate_double_click(volume: float = 0.14) -> bytes:
     return _to_bytes(click1, volume) + _silence_bytes(25) + _to_bytes(click2, volume)
 
 
+def generate_clean_beep(
+    frequency: float = 900,
+    duration_ms: float = 80,
+    volume: float = 0.22,
+) -> bytes:
+    """Generate a clean, simple sine beep — the base tone used for start/ready."""
+    num_samples = int(SAMPLE_RATE * duration_ms / 1000)
+    samples = _sine(num_samples, frequency, 0.85)
+    samples = _apply_envelope(samples, attack_ms=6.0, decay_ms=18.0)
+    return _to_bytes(samples, master_volume=volume)
+
+
+def generate_single_start_beep(volume: float = 0.22) -> bytes:
+    """One clean mid-pitch beep — 'recording started'."""
+    return generate_clean_beep(frequency=880, duration_ms=90, volume=volume)
+
+
+def generate_double_ready_beep(volume: float = 0.22) -> bytes:
+    """Two short higher-pitch beeps in quick succession — 'output ready'."""
+    beep = generate_clean_beep(frequency=1175, duration_ms=55, volume=volume)
+    gap = _silence_bytes(50)
+    return beep + gap + beep
+
+
 class AudioFeedback:
     """Manages audio feedback sounds."""
 
     def __init__(self):
         self._enabled = True
-        # Start beep softened to 45% volume — original was too jarring
-        self._start_beep = _attenuate(_load_wav_pcm("ptt-send.wav") or generate_ptt_click_chirp(), 0.45)
-        self._stop_beep = _load_wav_pcm("stop.wav") or generate_ptt_release()
-        self._clipboard_beep = generate_double_click()
+        # Simplified palette: one clean beep at start, double-beep at ready.
+        # Other events reuse these two tones (or stay silent) — the goal is
+        # two clearly distinct points of feedback, not a whole soundscape.
+        self._start_beep = generate_single_start_beep()
+        self._ready_beep = generate_double_ready_beep()
+        # Legacy aliases for events that still call through this class.
+        self._stop_beep = self._ready_beep
+        self._clipboard_beep = self._ready_beep
         self._toggle_on_beep = generate_rising_chirp()
         self._toggle_off_beep = generate_falling_chirp()
-        self._cached_beep = generate_cached_thunk()
-        self._complete_beep = _load_wav_pcm("ding-complete.wav") or generate_ptt_release()
-        self._pause_beep = _load_wav_pcm("pause.wav") or generate_double_click()
-        self._resume_beep = _load_wav_pcm("resume.wav") or generate_rising_chirp()
-        self._clear_beep = _load_wav_pcm("clear.wav") or generate_falling_chirp()
-        self._transcribe_beep = _attenuate(_load_wav_pcm("transcribe.wav") or generate_rising_chirp(), 0.5)
+        self._cached_beep = self._start_beep
+        self._complete_beep = self._ready_beep
+        self._pause_beep = generate_falling_chirp()
+        self._resume_beep = generate_rising_chirp()
+        self._clear_beep = generate_falling_chirp()
+        self._transcribe_beep = self._start_beep
 
     @property
     def enabled(self) -> bool:
@@ -232,6 +260,10 @@ class AudioFeedback:
 
     def play_start(self):
         if self._enabled: self._play_async(self._start_beep)
+
+    def play_ready(self):
+        """Single 'output ready' cue — delivered on clipboard / cursor / done."""
+        if self._enabled: self._play_async(self._ready_beep)
 
     def play_stop(self):
         if self._enabled: self._play_async(self._stop_beep)

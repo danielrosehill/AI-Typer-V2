@@ -2,10 +2,25 @@
 
 import io
 import logging
+import math
 import wave
 import threading
+import time
 from typing import Optional, Callable
+
+import numpy as np
 import pyaudio
+
+
+def _rms_int16(data: bytes) -> float:
+    """Compute RMS of int16 little-endian PCM bytes. Returns float (~0..32768)."""
+    if not data:
+        return 0.0
+    samples = np.frombuffer(data, dtype=np.int16)
+    if samples.size == 0:
+        return 0.0
+    # Use float64 to avoid int16 overflow when squaring
+    return float(math.sqrt(float(np.mean(samples.astype(np.float64) ** 2))))
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +45,15 @@ class AudioRecorder:
         self._record_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
         self.on_error: Optional[Callable[[str], None]] = None
+        # Called with a float 0.0-1.0 peak level per chunk (thread-safe callable)
+        self.on_level: Optional[Callable[[float], None]] = None
+        # Called once after `silence_timeout_seconds` of continuous silence (post-speech)
+        self.on_silence_timeout: Optional[Callable[[], None]] = None
+        self.silence_timeout_seconds: float = 0.0  # 0 = disabled
+        self.silence_rms_threshold: int = 300      # int16 RMS threshold
         self._error_occurred = False
+        self._speech_seen: bool = False
+        self._silence_started_at: float = 0.0
 
     def _get_supported_sample_rate(self, device_index: Optional[int]) -> int:
         """Find a supported sample rate for the device."""
@@ -71,6 +94,8 @@ class AudioRecorder:
 
         self.is_recording = True
         self.is_paused = False
+        self._speech_seen = False
+        self._silence_started_at = 0.0
         self.actual_sample_rate = self._get_supported_sample_rate(None)
 
         try:
@@ -101,6 +126,38 @@ class AudioRecorder:
                     with self._lock:
                         self.frames.append(data)
                     consecutive_errors = 0
+
+                    # Compute RMS for level meter + silence detection
+                    try:
+                        rms = _rms_int16(data)
+                    except Exception:
+                        rms = 0.0
+
+                    if self.on_level:
+                        # Normalise RMS (~0-32768) to 0.0-1.0 with a log-ish curve
+                        level = min(1.0, rms / 8000.0)
+                        try:
+                            self.on_level(level)
+                        except Exception:
+                            pass
+
+                    if self.silence_timeout_seconds > 0:
+                        now = time.monotonic()
+                        if rms >= self.silence_rms_threshold:
+                            self._speech_seen = True
+                            self._silence_started_at = 0.0
+                        elif self._speech_seen:
+                            if self._silence_started_at == 0.0:
+                                self._silence_started_at = now
+                            elif now - self._silence_started_at >= self.silence_timeout_seconds:
+                                cb = self.on_silence_timeout
+                                self._silence_started_at = 0.0
+                                self._speech_seen = False
+                                if cb:
+                                    try:
+                                        cb()
+                                    except Exception:
+                                        pass
                 except OSError:
                     consecutive_errors += 1
                     if consecutive_errors >= 5:
