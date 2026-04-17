@@ -59,9 +59,11 @@ class TranscriptionWorker(QThread):
     partial = pyqtSignal(str)  # accumulated partial text during streaming
 
     def __init__(self, api_key, model, raw_audio_data, prompt,
-                 review_enabled=False, vad_enabled=False, streaming_enabled=True):
+                 review_enabled=False, vad_enabled=False, streaming_enabled=True,
+                 mistral_api_key=""):
         super().__init__()
         self.api_key = api_key
+        self.mistral_api_key = mistral_api_key
         self.model = model
         self.raw_audio_data = raw_audio_data
         self.prompt = prompt
@@ -81,7 +83,8 @@ class TranscriptionWorker(QThread):
             )
 
             self.status.emit("Transcribing...")
-            client = get_client(self.api_key, self.model)
+            client = get_client(self.api_key, self.model,
+                                mistral_api_key=self.mistral_api_key)
             if self.streaming_enabled:
                 def _on_delta(_delta: str, accumulated: str):
                     self.partial.emit(accumulated)
@@ -178,6 +181,11 @@ class SettingsDialog(QDialog):
         self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_edit.setPlaceholderText("sk-or-...")
         gl.addRow("OpenRouter API Key:", self.api_key_edit)
+
+        self.mistral_key_edit = QLineEdit(config.mistral_api_key)
+        self.mistral_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.mistral_key_edit.setPlaceholderText("Optional — routes Voxtral directly to Mistral")
+        gl.addRow("Mistral API Key:", self.mistral_key_edit)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         gl.addRow(sep)
@@ -311,6 +319,7 @@ class SettingsDialog(QDialog):
     def get_config(self) -> Config:
         """Return updated config from dialog values."""
         self.config.openrouter_api_key = self.api_key_edit.text().strip()
+        self.config.mistral_api_key = self.mistral_key_edit.text().strip()
         self.config.default_model = self.default_picker.selected_model_id()
         self.config.default_budget_model = self.budget_picker.selected_model_id()
         self.config.user_name = self.user_name_edit.text().strip()
@@ -1157,6 +1166,7 @@ class MainWindow(QMainWindow):
         # Audio processing + transcription both run in background thread
         self.worker = TranscriptionWorker(
             api_key=self.config.openrouter_api_key,
+            mistral_api_key=self.config.mistral_api_key,
             model=self._effective_model(),
             raw_audio_data=audio_data,
             prompt=prompt,

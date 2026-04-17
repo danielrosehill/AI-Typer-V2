@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.4.0"
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -18,6 +18,13 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 # re-check live pricing at openrouter.ai/models before relying on it for cost decisions.
 MODELS = [
     # ── Budget ──
+    {
+        "id": "mistralai/voxtral-small-24b-2507",
+        "label": "Voxtral Small 24B (Mistral)",
+        "category": "Budget",
+        "manufacturer": "Mistral",
+        "description": "Recommended default for live dictation — ~1.0s latency, WER ~0.02, 2-8× faster than Gemini. 32k context (~15 min audio max).",
+    },
     {
         "id": "google/gemini-2.0-flash-lite-001",
         "label": "Gemini 2.0 Flash Lite (Google)",
@@ -44,29 +51,22 @@ MODELS = [
         "label": "Gemini 3.1 Flash Lite (Google)",
         "category": "Budget",
         "manufacturer": "Google",
-        "description": "Default — latest flash-lite preview",
-    },
-    {
-        "id": "mistralai/voxtral-small-24b-2507",
-        "label": "Voxtral Small 24B (Mistral)",
-        "category": "Budget",
-        "manufacturer": "Mistral",
-        "description": "Mistral's 24B audio-capable model",
+        "description": "Latest flash-lite preview",
     },
     # ── Standard ──
+    {
+        "id": "google/gemini-3-flash-preview",
+        "label": "Gemini 3 Flash (Google)",
+        "category": "Standard",
+        "manufacturer": "Google",
+        "description": "Recommended for accuracy — lowest WER in panel (~0.014), latency ~2.2s. Best when accuracy matters more than speed.",
+    },
     {
         "id": "google/gemini-2.5-flash",
         "label": "Gemini 2.5 Flash (Google)",
         "category": "Standard",
         "manufacturer": "Google",
         "description": "Workhorse 2.5 Flash with audio",
-    },
-    {
-        "id": "google/gemini-3-flash-preview",
-        "label": "Gemini 3 Flash (Google)",
-        "category": "Standard",
-        "manufacturer": "Google",
-        "description": "Gemini 3 Flash Preview — strong audio understanding",
     },
     {
         "id": "xiaomi/mimo-v2-omni",
@@ -80,34 +80,37 @@ MODELS = [
         "label": "GPT Audio Mini (OpenAI)",
         "category": "Standard",
         "manufacturer": "OpenAI",
-        "description": "Compact GPT audio model",
+        "description": "Not recommended — 25-40% conversationalization failure rate. Use only with output validation.",
     },
     {
         "id": "google/gemini-2.5-pro",
         "label": "Gemini 2.5 Pro (Google)",
         "category": "Standard",
         "manufacturer": "Google",
-        "description": "Premium reasoning-capable audio model (overkill for short dictation)",
+        "description": "Not recommended for transcription — strictly dominated by Gemini 3 Flash (higher latency ~7.2s, higher cost, no accuracy gain).",
     },
     {
         "id": "openai/gpt-audio",
         "label": "GPT Audio (OpenAI)",
         "category": "Standard",
         "manufacturer": "OpenAI",
-        "description": "Full-size GPT audio model",
+        "description": "Not recommended — 25-40% conversationalization failure rate (generates responses instead of transcriptions). Use only with output validation.",
     },
     {
         "id": "openai/gpt-4o-audio-preview",
         "label": "GPT-4o Audio Preview (OpenAI)",
         "category": "Standard",
         "manufacturer": "OpenAI",
-        "description": "GPT-4o with native audio input",
+        "description": "Not recommended — 25-40% conversationalization failure rate. Use only with output validation.",
     },
 ]
 
-# Default models
-DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview"
-DEFAULT_BUDGET_MODEL = "google/gemini-3.1-flash-lite-preview"
+# Default models — per in-house WER/latency evals (see
+# https://huggingface.co/blog/danielrosehill/audio-multimodal-bitrate-wer):
+# Voxtral is the primary recommendation for live dictation (latency ~1s, WER ~0.02),
+# with Gemini 3 Flash Preview as the accuracy-optimal alternative (WER ~0.014, ~2.2s).
+DEFAULT_MODEL = "mistralai/voxtral-small-24b-2507"
+DEFAULT_BUDGET_MODEL = "mistralai/voxtral-small-24b-2507"
 
 # Review agent model (cheap, fast)
 REVIEW_MODEL = "google/gemini-3.1-flash-lite-preview"
@@ -464,8 +467,9 @@ class Config:
 
     # API
     openrouter_api_key: str = ""
-    default_model: str = "google/gemini-3.1-flash-lite-preview"
-    default_budget_model: str = "google/gemini-3.1-flash-lite-preview"
+    mistral_api_key: str = ""  # Direct Mistral API — used for Voxtral when set
+    default_model: str = "mistralai/voxtral-small-24b-2507"
+    default_budget_model: str = "mistralai/voxtral-small-24b-2507"
     active_model: str = ""  # Runtime override from main UI (empty = use default_model)
 
     # Transcription
@@ -530,6 +534,10 @@ def load_config() -> Config:
         env_key = os.environ.get("OPENROUTER_API_KEY", "")
         if env_key:
             config.openrouter_api_key = env_key
+
+        env_mistral = os.environ.get("MISTRAL_API_KEY", "")
+        if env_mistral:
+            config.mistral_api_key = env_mistral
 
         # Migration: accept old gemini_api_key from config/env
         if not config.openrouter_api_key:

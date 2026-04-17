@@ -1,0 +1,5 @@
+{"speaker":"Narrator","start_time":0.0,"end_time":2.7,"text":"He spent almost an hour in the secondhand bookshop on Emek Refaim\nyesterday."}
+{"speaker":"Narrator","start_time":2.8,"end_time":5.7,"text":"Not really looking for anything in particular."}
+{"speaker":"Narrator","start_time":5.7,"end_time":11.3,"text":"The owner, a quiet man with careful hands, had just unpacked a box of old paperbacks and\nwas arranging them on the lower shelves."}
+{"speaker":"Narrator","start_time":11.4,"end_time":16.4,"text":"I picked up a novel I had read years ago, opened it somewhere near the middle,"}
+{"speaker":"Narrator","start_time":16.4,"end_time":22.2,"text":"and read a single paragraph. That was enough to remember why I had loved it."}

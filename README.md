@@ -99,6 +99,21 @@ Hotkeys work globally on Wayland via evdev (reads from input-remapper devices). 
 
 ## Compatible Models
 
+### Benchmark results (in-house eval, 17/04/2026)
+
+Full sweep across 4 dictation samples × 5 MP3 bitrates × 12 models (240 API calls). Full data: [`evals/results/full-sweep-1704-150152/summary.md`](evals/results/full-sweep-1704-150152/summary.md). Key findings that drive the app's defaults:
+
+| Model | Best WER | Latency at 32 kbps | Notes |
+|---|---:|---:|---|
+| `mistralai/voxtral-small-24b-2507` | 0.017 | **1.25s** | **Recommended default** — 2-8× faster than Gemini, near-best accuracy |
+| `google/gemini-3-flash-preview` | **0.007** | 2.20s | Accuracy-optimal alternative |
+| `google/gemini-2.5-pro` | 0.014 | 6.64s | Strictly dominated — no reason to use for dictation |
+| `openai/gpt-audio*` family | 0.014–0.541 | ~1.7s | Unstable — 25-40% conversationalization failure rate |
+
+**Development direction**: Voxtral's latency lead is large enough that direct Mistral API support is now a first-class path (set `MISTRAL_API_KEY` or the Mistral key field in Settings to route Voxtral traffic direct, bypassing OpenRouter). OpenRouter remains the fallback and the route for all non-Mistral models.
+
+### Model catalog
+
 AI Typer V2 works with any OpenRouter model that accepts audio input and produces text output. Models exposed in the settings UI are curated from OpenRouter's audio-input catalog — see [docs/openrouter-audio-models.md](docs/openrouter-audio-models.md) for the full snapshot and selection rationale. Current picks:
 
 **Budget tier**

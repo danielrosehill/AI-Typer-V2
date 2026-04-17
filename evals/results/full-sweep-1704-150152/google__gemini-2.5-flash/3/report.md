@@ -1,0 +1,47 @@
+# google/gemini-2.5-flash — 3
+
+| Bitrate | Payload | Latency | WER | Notes |
+|---|---:|---:|---:|---|
+| 16 kbps | 49.2 KB | 1.583 s | 0.067 |  |
+| 24 kbps | 73.7 KB | 1.837 s | 0.067 |  |
+| 32 kbps | 98.2 KB | 1.651 s | 0.040 |  |
+| 48 kbps | 147.3 KB | 2.044 s | 0.027 |  |
+| 64 kbps | 196.4 KB | 2.216 s | 0.053 |  |
+
+## Reference
+
+```
+I spent almost an hour in the secondhand bookshop on Emek Refaim yesterday, not really looking for anything in particular. The owner, a quiet man with careful hands, had just unpacked a box of old paperbacks and was arranging them on the lower shelves. I picked up a novel I had read years ago, opened it somewhere near the middle, and read a single paragraph. That was enough to remember why I had loved it.
+```
+
+## Transcriptions
+
+### 16 kbps
+
+```
+We spent almost an hour in the secondhand bookshop on Arafat yesterday, not really looking for anything in particular. The owner, a quiet man with careful hands, had just unpacked boxes of old paperbacks and was arranging them on the lower shelves. I picked up a novel I had read years ago, opened it somewhere near the middle, and read a single paragraph. That was enough to remember why I had loved it.
+```
+
+### 24 kbps
+
+```
+I spent almost an hour in the secondhand book shop on Enoch Rahim yesterday. Not really looking for anything in particular. The owner, a quiet man with careful hands, had just unpacked a box of old paperbacks and was arranging them on the lower shelves. I picked up a novel I had read years ago, opened it somewhere near the middle, and read a single paragraph. That was enough to remember why I had loved it.
+```
+
+### 32 kbps
+
+```
+I spent almost an hour in the secondhand bookshop on Amarac Rafine yesterday. Not really looking for anything in particular. The owner, a quiet man with careful hands, had just unpacked a box of old paperbacks and was arranging them on the lower shelves. I picked up a novel I had read years ago, opened it somewhere near the middle, and read a single paragraph. That was enough to remember why I had loved it.
+```
+
+### 48 kbps
+
+```
+I spent almost an hour in the second-hand bookshop on Emek Refaim yesterday. Not really looking for anything in particular. The owner, a quiet man with careful hands, had just unpacked a box of old paperbacks and was arranging them on the lower shelves. I picked up a novel I had read years ago, opened it somewhere near the middle, and read a single paragraph. That was enough to remember why I had loved it.
+```
+
+### 64 kbps
+
+```
+He spent almost an hour in the secondhand bookshop on Emeric Rafine yesterday, not really looking for anything in particular. The owner, a quiet man with careful hands, had just unpacked a box of old paperbacks and was arranging them on the lower shelves. I picked up a novel I had read years ago, opened it somewhere near the middle and read a single paragraph. That was enough to remember why I had loved it.
+```

@@ -12,6 +12,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
 
 # Patterns that match AI preamble lines (case-insensitive).
 _PREAMBLE_PATTERNS = [
@@ -115,11 +116,17 @@ class TranscriptionResult:
 
 
 class OpenRouterClient:
-    """OpenRouter API client for audio transcription."""
+    """OpenAI-compatible chat completions client for audio transcription.
 
-    def __init__(self, api_key: str, model: str = "google/gemini-3.1-flash-lite-preview"):
+    Supports OpenRouter and Mistral (same wire format). The `api_url` selects
+    the endpoint; the `api_key` must match the chosen provider.
+    """
+
+    def __init__(self, api_key: str, model: str = "google/gemini-3.1-flash-lite-preview",
+                 api_url: str = OPENROUTER_API_URL):
         self.api_key = api_key
         self.model = model
+        self.api_url = api_url
         self._session: Optional[requests.Session] = None
 
     def _get_session(self) -> requests.Session:
@@ -160,7 +167,7 @@ class OpenRouterClient:
         payload = self._build_audio_payload(audio_data, prompt, audio_format)
 
         session = self._get_session()
-        response = session.post(OPENROUTER_API_URL, json=payload, timeout=120)
+        response = session.post(self.api_url, json=payload, timeout=120)
         response.raise_for_status()
         data = response.json()
 
@@ -185,7 +192,7 @@ class OpenRouterClient:
         payload = self._build_audio_payload(audio_data, prompt, audio_format, stream=True)
 
         session = self._get_session()
-        response = session.post(OPENROUTER_API_URL, json=payload, timeout=120, stream=True)
+        response = session.post(self.api_url, json=payload, timeout=120, stream=True)
         response.raise_for_status()
 
         accumulated = ""
@@ -241,7 +248,7 @@ class OpenRouterClient:
         }
 
         session = self._get_session()
-        response = session.post(OPENROUTER_API_URL, json=payload, timeout=60)
+        response = session.post(self.api_url, json=payload, timeout=60)
         response.raise_for_status()
         data = response.json()
 
@@ -256,6 +263,22 @@ class OpenRouterClient:
         )
 
 
-def get_client(api_key: str, model: str) -> OpenRouterClient:
-    """Factory function to get transcription client."""
-    return OpenRouterClient(api_key, model)
+# Map OpenRouter model IDs → Mistral-native model IDs for direct API calls.
+# Mistral's API uses short names without the "mistralai/" prefix or "-24b" suffix.
+_OR_TO_MISTRAL_MODEL = {
+    "mistralai/voxtral-small-24b-2507": "voxtral-small-2507",
+    "mistralai/voxtral-mini-2507": "voxtral-mini-2507",
+}
+
+
+def get_client(api_key: str, model: str,
+               mistral_api_key: str = "") -> OpenRouterClient:
+    """Factory function to get transcription client.
+
+    If the model is a Mistral-native model (e.g. Voxtral) and a Mistral API key
+    is provided, routes directly to Mistral's API. Otherwise uses OpenRouter.
+    """
+    if mistral_api_key and model.startswith("mistralai/"):
+        mistral_model = _OR_TO_MISTRAL_MODEL.get(model, model.split("/", 1)[1])
+        return OpenRouterClient(mistral_api_key, mistral_model, api_url=MISTRAL_API_URL)
+    return OpenRouterClient(api_key, model, api_url=OPENROUTER_API_URL)
