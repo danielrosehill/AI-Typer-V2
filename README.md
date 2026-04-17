@@ -17,7 +17,9 @@ The model automatically detects what you're dictating (email, shopping list, mee
 - **Second-pass review** — optional coherence check catches misheard words
 - **Global hotkeys** — works system-wide, even when the app is minimized (F13-F24 keys)
 - **Append mode** — record multiple segments, then transcribe them together
-- **Output flexibility** — show in app, copy to clipboard, or type directly at cursor
+- **Output flexibility** — show in window, copy to clipboard, or type at cursor (three independent toggles; each bindable to a hotkey)
+- **Streaming transcription** — live partial text while the model generates, lowering perceived latency
+- **Type-at-cursor via Ctrl+Shift+V** — works in terminals (Konsole, Claude Code CLI, VS Code) as well as GUI apps. See [docs/keyboard-emulation.md](docs/keyboard-emulation.md) for details.
 
 ## Quick Start
 
@@ -46,9 +48,9 @@ sudo apt install ydotool
 ## Usage
 
 ### Simple Workflow
-1. Press **Record** (or your hotkey, default F15)
+1. Press **Record** (or your hotkey, default F13)
 2. Speak naturally
-3. Press **Stop** — transcription appears automatically
+3. Press **Stop** — transcription streams in as the model generates it
 
 ### Append Workflow
 1. Press **F16** to start recording
@@ -57,9 +59,19 @@ sudo apt install ydotool
 4. Press **F17** to transcribe all segments together
 5. Press **F18** to clear the cache
 
+### Output modes
+
+Three independent toggles, visible in the output bar and bindable to hotkeys:
+
+- **Show in window** — live-updates the text box as the model streams
+- **Clipboard** — auto-copies the finished transcription
+- **Type at cursor** — pastes at the cursor via clipboard + Ctrl+Shift+V (see [docs/keyboard-emulation.md](docs/keyboard-emulation.md))
+
+Each can be flipped on/off without opening settings once a hotkey is assigned.
+
 ### Format & Tone
-- **Format dropdown**: Auto-detect (default), General, Email, To-Do, Meeting Notes, Bullets, Technical
-- **Tone dropdown**: Casual, Neutral, Professional
+- **Format dropdown**: Auto-detect (default), General, Email, To-Do, Meeting Notes, Bullets, Technical, and more
+- **Tone dropdown**: Casual, Neutral, Professional, Formal, Terse, and more
 - These are applied at transcription time — you can change them between recording and transcribing
 
 ## Configuration
@@ -72,33 +84,40 @@ Access via **File → Settings** or **Ctrl+,**.
 
 | Function | Default | Description |
 |----------|---------|-------------|
-| Toggle | F15 | Start recording, or stop and transcribe |
+| Toggle | F13 | Start recording, or stop and transcribe |
 | Tap Toggle | F16 | Start recording, or stop and cache |
 | Transcribe | F17 | Transcribe cached audio |
 | Clear | F18 | Clear recording and cache |
 | Append | F19 | Start a new recording segment |
 | Pause | F20 | Pause/resume recording |
+| Retake | F21 | Discard current recording and restart |
+| Toggle window output | (unset) | Flip "Show in window" on/off |
+| Toggle clipboard | (unset) | Flip "Clipboard" on/off |
+| Toggle type-at-cursor | (unset) | Flip "Type at cursor" on/off |
 
 Hotkeys work globally on Wayland via evdev (reads from input-remapper devices). Falls back to pynput/X11 on other systems.
 
 ## Compatible Models
 
-AI Typer V2 works with any OpenRouter model that accepts audio input and produces text output. The following models are currently available with this modality:
+AI Typer V2 works with any OpenRouter model that accepts audio input and produces text output. Models exposed in the settings UI are curated from OpenRouter's audio-input catalog — see [docs/openrouter-audio-models.md](docs/openrouter-audio-models.md) for the full snapshot and selection rationale. Current picks:
 
-| Model | ID |
-|-------|----|
-| Xiaomi MiMo V2 Omni | `xiaomi/mimo-v2-omni` |
-| Gemini 3.1 Flash-Lite Preview | `google/gemini-3.1-flash-lite-preview` |
-| GPT Audio | `openai/gpt-audio` |
-| GPT Audio Mini | `openai/gpt-audio-mini` |
-| Gemini 3 Flash Preview | `google/gemini-3-flash-preview` |
-| Voxtral Small 24B | `mistralai/voxtral-small-24b-2507` |
-| GPT-4o Audio Preview | `openai/gpt-4o-audio-preview` |
-| Gemini 2.5 Flash-Lite | `google/gemini-2.5-flash-lite` |
-| Gemini 2.5 Flash | `google/gemini-2.5-flash` |
-| Healer Alpha | `openrouter/healer-alpha` |
+**Budget tier**
+- `google/gemini-2.0-flash-lite-001` — cheapest ($0.075/M in)
+- `google/gemini-2.0-flash-001`
+- `google/gemini-2.5-flash-lite`
+- `google/gemini-3.1-flash-lite-preview` *(default)*
+- `mistralai/voxtral-small-24b-2507`
 
-Browse the full list at [openrouter.ai/models](https://openrouter.ai/models?input_modalities=audio&output_modalities=text).
+**Standard tier**
+- `google/gemini-2.5-flash`
+- `google/gemini-3-flash-preview`
+- `xiaomi/mimo-v2-omni`
+- `openai/gpt-audio-mini`
+- `google/gemini-2.5-pro`
+- `openai/gpt-audio`
+- `openai/gpt-4o-audio-preview`
+
+Browse the full OpenRouter catalog at [openrouter.ai/models](https://openrouter.ai/models?input_modalities=audio&output_modalities=text).
 
 ## Architecture
 
@@ -119,10 +138,10 @@ app/src/
 1. **Record** audio from microphone (PyAudio)
 2. **VAD** strips silence segments (TEN VAD)
 3. **AGC** normalizes volume levels
-4. **Compress** to 16kHz mono WAV
-5. **Send** audio + cleanup prompt to Gemini via OpenRouter
+4. **Compress** to 16kHz mono MP3 @ 64 kbps
+5. **Send** audio + cleanup prompt to the selected multimodal model via OpenRouter (streaming SSE by default)
 6. **Review** (optional) — second pass catches misheard words
-7. **Output** — display in app, copy to clipboard, or type at cursor
+7. **Output** — show in window (live-updates while streaming), copy to clipboard, and/or type at cursor
 
 ## License
 

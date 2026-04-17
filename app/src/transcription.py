@@ -1,10 +1,11 @@
 """Transcription API client using OpenRouter (OpenAI-compatible API)."""
 
 import base64
+import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Iterator, Optional
 
 import requests
 
@@ -130,31 +131,33 @@ class OpenRouterClient:
             })
         return self._session
 
-    def transcribe(self, audio_data: bytes, prompt: str) -> TranscriptionResult:
-        """Transcribe audio using OpenRouter multimodal model."""
+    def _build_audio_payload(self, audio_data: bytes, prompt: str,
+                             audio_format: str = "mp3", stream: bool = False) -> dict:
         audio_b64 = base64.b64encode(audio_data).decode("utf-8")
-
         payload = {
             "model": self.model,
             "messages": [
-                {
-                    "role": "system",
-                    "content": prompt,
-                },
+                {"role": "system", "content": prompt},
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "input_audio",
-                            "input_audio": {
-                                "data": audio_b64,
-                                "format": "mp3",
-                            },
+                            "input_audio": {"data": audio_b64, "format": audio_format},
                         },
                     ],
                 },
             ],
         }
+        if stream:
+            payload["stream"] = True
+            payload["usage"] = {"include": True}
+        return payload
+
+    def transcribe(self, audio_data: bytes, prompt: str,
+                   audio_format: str = "mp3") -> TranscriptionResult:
+        """Transcribe audio using OpenRouter multimodal model (non-streaming)."""
+        payload = self._build_audio_payload(audio_data, prompt, audio_format)
 
         session = self._get_session()
         response = session.post(OPENROUTER_API_URL, json=payload, timeout=120)
@@ -167,6 +170,56 @@ class OpenRouterClient:
 
         return TranscriptionResult(
             text=normalize_paragraph_spacing(strip_ai_preamble(text)),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    def transcribe_stream(self, audio_data: bytes, prompt: str,
+                          on_delta: Callable[[str, str], None],
+                          audio_format: str = "mp3") -> TranscriptionResult:
+        """Stream transcription via SSE.
+
+        Calls on_delta(delta_text, accumulated_text) for each chunk. Post-processing
+        (preamble strip, paragraph spacing) is applied only to the final text.
+        """
+        payload = self._build_audio_payload(audio_data, prompt, audio_format, stream=True)
+
+        session = self._get_session()
+        response = session.post(OPENROUTER_API_URL, json=payload, timeout=120, stream=True)
+        response.raise_for_status()
+
+        accumulated = ""
+        input_tokens = 0
+        output_tokens = 0
+
+        for line in response.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            data_str = line[5:].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            usage = chunk.get("usage")
+            if usage:
+                input_tokens = usage.get("prompt_tokens", input_tokens)
+                output_tokens = usage.get("completion_tokens", output_tokens)
+
+            for choice in chunk.get("choices", []) or []:
+                delta = (choice.get("delta") or {}).get("content") or ""
+                if delta:
+                    accumulated += delta
+                    try:
+                        on_delta(delta, accumulated)
+                    except Exception:
+                        logger.exception("on_delta callback failed")
+
+        final_text = normalize_paragraph_spacing(strip_ai_preamble(accumulated))
+        return TranscriptionResult(
+            text=final_text,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )

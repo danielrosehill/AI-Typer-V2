@@ -56,9 +56,10 @@ class TranscriptionWorker(QThread):
     finished = pyqtSignal(str, float)  # text, elapsed_seconds
     error = pyqtSignal(str)
     status = pyqtSignal(str)  # status updates for UI
+    partial = pyqtSignal(str)  # accumulated partial text during streaming
 
     def __init__(self, api_key, model, raw_audio_data, prompt,
-                 review_enabled=False, vad_enabled=False):
+                 review_enabled=False, vad_enabled=False, streaming_enabled=True):
         super().__init__()
         self.api_key = api_key
         self.model = model
@@ -66,6 +67,7 @@ class TranscriptionWorker(QThread):
         self.prompt = prompt
         self.review_enabled = review_enabled
         self.vad_enabled = vad_enabled
+        self.streaming_enabled = streaming_enabled
 
     def run(self):
         try:
@@ -80,7 +82,12 @@ class TranscriptionWorker(QThread):
 
             self.status.emit("Transcribing...")
             client = get_client(self.api_key, self.model)
-            result = client.transcribe(processed, self.prompt)
+            if self.streaming_enabled:
+                def _on_delta(_delta: str, accumulated: str):
+                    self.partial.emit(accumulated)
+                result = client.transcribe_stream(processed, self.prompt, _on_delta)
+            else:
+                result = client.transcribe(processed, self.prompt)
             text = result.text
 
             # Second-pass review
@@ -264,6 +271,9 @@ class SettingsDialog(QDialog):
         self.hotkey_append_combo = QComboBox()
         self.hotkey_pause_combo = QComboBox()
         self.hotkey_retake_combo = QComboBox()
+        self.hotkey_toggle_app_combo = QComboBox()
+        self.hotkey_toggle_clipboard_combo = QComboBox()
+        self.hotkey_toggle_inject_combo = QComboBox()
 
         hotkey_combos = [
             (self.hotkey_toggle_combo, config.hotkey_toggle, "Toggle (start/stop):"),
@@ -273,6 +283,9 @@ class SettingsDialog(QDialog):
             (self.hotkey_append_combo, config.hotkey_append, "Append:"),
             (self.hotkey_pause_combo, config.hotkey_pause, "Pause/Resume:"),
             (self.hotkey_retake_combo, config.hotkey_retake, "Retake:"),
+            (self.hotkey_toggle_app_combo, config.hotkey_toggle_app, "Toggle window output:"),
+            (self.hotkey_toggle_clipboard_combo, config.hotkey_toggle_clipboard, "Toggle clipboard:"),
+            (self.hotkey_toggle_inject_combo, config.hotkey_toggle_inject, "Toggle type-at-cursor:"),
         ]
         for combo, current_value, label_text in hotkey_combos:
             for key_id, display_name in HOTKEY_OPTIONS:
@@ -317,6 +330,9 @@ class SettingsDialog(QDialog):
         self.config.hotkey_append = self.hotkey_append_combo.currentData()
         self.config.hotkey_pause = self.hotkey_pause_combo.currentData()
         self.config.hotkey_retake = self.hotkey_retake_combo.currentData()
+        self.config.hotkey_toggle_app = self.hotkey_toggle_app_combo.currentData()
+        self.config.hotkey_toggle_clipboard = self.hotkey_toggle_clipboard_combo.currentData()
+        self.config.hotkey_toggle_inject = self.hotkey_toggle_inject_combo.currentData()
         return self.config
 
 
@@ -331,6 +347,9 @@ class MainWindow(QMainWindow):
     _append_signal = pyqtSignal()
     _pause_signal = pyqtSignal()
     _retake_signal = pyqtSignal()
+    _toggle_app_signal = pyqtSignal()
+    _toggle_clipboard_signal = pyqtSignal()
+    _toggle_inject_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -580,6 +599,13 @@ class MainWindow(QMainWindow):
         output_bar = QHBoxLayout()
         output_bar.setSpacing(6)
 
+        # Text-box output toggle (show transcription in the app window)
+        self.app_check = QCheckBox("\U0001f4dd  Show in window")
+        self.app_check.setChecked(self.config.output_to_app)
+        self.app_check.setToolTip("Show transcription in the text box below")
+        self.app_check.toggled.connect(self._on_app_toggled)
+        output_bar.addWidget(self.app_check)
+
         # Clipboard toggle
         self.clipboard_check = QCheckBox("\U0001f4cb  Clipboard")
         self.clipboard_check.setChecked(self.config.output_to_clipboard)
@@ -590,7 +616,10 @@ class MainWindow(QMainWindow):
         # Text injection toggle
         self.inject_check = QCheckBox("\u2328  Type at cursor")
         self.inject_check.setChecked(self.config.output_to_inject)
-        self.inject_check.setToolTip("Type transcription at cursor position (ydotool)")
+        self.inject_check.setToolTip(
+            "Paste transcription at cursor position via clipboard + Ctrl+Shift+V "
+            "(ydotool). Works in terminals, editors, and GUI apps."
+        )
         self.inject_check.toggled.connect(self._on_inject_toggled)
         output_bar.addWidget(self.inject_check)
 
@@ -884,6 +913,9 @@ class MainWindow(QMainWindow):
         self._append_signal.connect(self._start_append)
         self._pause_signal.connect(self._pause_resume)
         self._retake_signal.connect(self._retake)
+        self._toggle_app_signal.connect(self._toggle_app_mode)
+        self._toggle_clipboard_signal.connect(self._toggle_clipboard_mode)
+        self._toggle_inject_signal.connect(self._toggle_inject_mode)
 
     def _setup_hotkeys(self):
         if self.hotkey_listener:
@@ -913,6 +945,15 @@ class MainWindow(QMainWindow):
         if hk.hotkey_retake:
             self.hotkey_listener.register("retake", hk.hotkey_retake,
                                           lambda: self._retake_signal.emit())
+        if hk.hotkey_toggle_app:
+            self.hotkey_listener.register("toggle_app", hk.hotkey_toggle_app,
+                                          lambda: self._toggle_app_signal.emit())
+        if hk.hotkey_toggle_clipboard:
+            self.hotkey_listener.register("toggle_clipboard", hk.hotkey_toggle_clipboard,
+                                          lambda: self._toggle_clipboard_signal.emit())
+        if hk.hotkey_toggle_inject:
+            self.hotkey_listener.register("toggle_inject", hk.hotkey_toggle_inject,
+                                          lambda: self._toggle_inject_signal.emit())
 
         self.hotkey_listener.start()
 
@@ -1121,11 +1162,23 @@ class MainWindow(QMainWindow):
             prompt=prompt,
             review_enabled=self.config.review_enabled,
             vad_enabled=self.config.vad_enabled,
+            streaming_enabled=self.config.streaming_enabled,
         )
         self.worker.status.connect(self.status_label.setText)
         self.worker.finished.connect(self._on_transcription_done)
         self.worker.error.connect(self._on_transcription_error)
+        self.worker.partial.connect(self._on_partial_text)
         self.worker.start()
+
+    def _on_partial_text(self, accumulated: str):
+        """Live-update the text box while streaming."""
+        if self.config.output_to_app and accumulated:
+            self.text_edit.setMarkdown(accumulated)
+            cursor = self.text_edit.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self.text_edit.setTextCursor(cursor)
+        # Compact progress indicator in the status bar
+        self.status_label.setText(f"Transcribing... ({len(accumulated)} chars)")
 
     def _on_transcription_done(self, text: str, elapsed: float):
         self.record_btn.setEnabled(True)
@@ -1184,7 +1237,13 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Mic error: {error}")
 
     def _inject_text(self, text: str):
-        """Paste text at cursor position via clipboard + Ctrl+V."""
+        """Paste text at cursor position via clipboard + Ctrl+Shift+V.
+
+        Uses Ctrl+Shift+V (not Ctrl+V) because terminals (Konsole, VS Code
+        terminal, Claude Code CLI) reserve Ctrl+V for the `lnext` literal-input
+        function. Ctrl+Shift+V is the universal paste shortcut — it works in
+        terminals AND in Kate, browsers, and most GUI apps on KDE Plasma.
+        """
         try:
             # Save current clipboard
             old_clip = None
@@ -1200,8 +1259,10 @@ class MainWindow(QMainWindow):
 
             # Set clipboard to transcribed text and paste
             copy_to_clipboard(text)
+            # ydotool key codes: 29=LeftCtrl, 42=LeftShift, 47=V (from linux/input-event-codes.h)
+            # Using numeric codes for ctrl+shift+v: press all, release all.
             subprocess.run(
-                ["ydotool", "key", "ctrl+v"],
+                ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"],
                 timeout=5, capture_output=True,
             )
 
@@ -1254,6 +1315,28 @@ class MainWindow(QMainWindow):
     def _on_inject_toggled(self, checked: bool):
         self.config.output_to_inject = checked
         save_config(self.config)
+
+    def _on_app_toggled(self, checked: bool):
+        self.config.output_to_app = checked
+        save_config(self.config)
+
+    def _toggle_app_mode(self):
+        """Hotkey handler: flip Show-in-window mode."""
+        self.app_check.setChecked(not self.app_check.isChecked())
+        state = "on" if self.config.output_to_app else "off"
+        self.status_label.setText(f"Window output {state}")
+
+    def _toggle_clipboard_mode(self):
+        """Hotkey handler: flip Clipboard mode."""
+        self.clipboard_check.setChecked(not self.clipboard_check.isChecked())
+        state = "on" if self.config.output_to_clipboard else "off"
+        self.status_label.setText(f"Clipboard output {state}")
+
+    def _toggle_inject_mode(self):
+        """Hotkey handler: flip Type-at-cursor mode."""
+        self.inject_check.setChecked(not self.inject_check.isChecked())
+        state = "on" if self.config.output_to_inject else "off"
+        self.status_label.setText(f"Type-at-cursor {state}")
 
     def _cycle_audio_feedback(self):
         """Cycle through audio feedback modes: beeps -> tts -> silent -> beeps."""

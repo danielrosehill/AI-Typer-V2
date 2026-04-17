@@ -90,9 +90,10 @@ def prepare_audio_for_api(
             print(f"AGC: Applied {agc_stats['gain_applied_db']}dB gain "
                   f"(peak: {agc_stats['original_peak_dbfs']:.1f}dB -> {agc_stats['final_peak_dbfs']:.1f}dB)")
 
-    # Export as MP3 for much smaller upload size (10-20x smaller than WAV)
+    # Export as MP3 — 32kbps mono 16kHz is the accuracy/bandwidth sweet spot
+    # for speech dictation through OpenRouter audio-LLMs (see docs/openrouter-audio-api.md).
     output = io.BytesIO()
-    audio.export(output, format="mp3", bitrate="64k")
+    audio.export(output, format="mp3", bitrate="32k")
     return output.getvalue(), original_duration, vad_duration
 
 

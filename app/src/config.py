@@ -13,43 +13,60 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Available models (OpenRouter audio-in → text-out)
 # Each entry: id, label, category ("Standard" or "Budget"), manufacturer, description
+# Curated from OpenRouter's audio-input catalog. See docs/openrouter-audio-models.md
+# for the full snapshot and selection rationale. Tier assignment is indicative —
+# re-check live pricing at openrouter.ai/models before relying on it for cost decisions.
 MODELS = [
     # ── Budget ──
+    {
+        "id": "google/gemini-2.0-flash-lite-001",
+        "label": "Gemini 2.0 Flash Lite (Google)",
+        "category": "Budget",
+        "manufacturer": "Google",
+        "description": "Cheapest audio-capable Gemini tier",
+    },
+    {
+        "id": "google/gemini-2.0-flash-001",
+        "label": "Gemini 2.0 Flash (Google)",
+        "category": "Budget",
+        "manufacturer": "Google",
+        "description": "Fast 2.0 Flash with audio input",
+    },
+    {
+        "id": "google/gemini-2.5-flash-lite",
+        "label": "Gemini 2.5 Flash Lite (Google)",
+        "category": "Budget",
+        "manufacturer": "Google",
+        "description": "Low-latency 2.5 Flash Lite",
+    },
     {
         "id": "google/gemini-3.1-flash-lite-preview",
         "label": "Gemini 3.1 Flash Lite (Google)",
         "category": "Budget",
         "manufacturer": "Google",
-        "description": "Lightweight Gemini model optimised for speed and cost",
+        "description": "Default — latest flash-lite preview",
     },
     {
-        "id": "openai/gpt-audio-mini",
-        "label": "GPT Audio Mini (OpenAI)",
+        "id": "mistralai/voxtral-small-24b-2507",
+        "label": "Voxtral Small 24B (Mistral)",
         "category": "Budget",
-        "manufacturer": "OpenAI",
-        "description": "Compact GPT audio model for cost-efficient transcription",
+        "manufacturer": "Mistral",
+        "description": "Mistral's 24B audio-capable model",
     },
     # ── Standard ──
+    {
+        "id": "google/gemini-2.5-flash",
+        "label": "Gemini 2.5 Flash (Google)",
+        "category": "Standard",
+        "manufacturer": "Google",
+        "description": "Workhorse 2.5 Flash with audio",
+    },
     {
         "id": "google/gemini-3-flash-preview",
         "label": "Gemini 3 Flash (Google)",
         "category": "Standard",
         "manufacturer": "Google",
-        "description": "Fast, capable Gemini model with strong audio understanding",
-    },
-    {
-        "id": "openai/gpt-audio",
-        "label": "GPT Audio (OpenAI)",
-        "category": "Standard",
-        "manufacturer": "OpenAI",
-        "description": "Full-size GPT audio model with high transcription accuracy",
-    },
-    {
-        "id": "openai/gpt-4o-audio-preview",
-        "label": "GPT-4o Audio Preview (OpenAI)",
-        "category": "Standard",
-        "manufacturer": "OpenAI",
-        "description": "GPT-4o with native audio input support",
+        "description": "Gemini 3 Flash Preview — strong audio understanding",
     },
     {
         "id": "xiaomi/mimo-v2-omni",
@@ -59,18 +76,32 @@ MODELS = [
         "description": "Multimodal omni model with audio understanding",
     },
     {
-        "id": "mistralai/voxtral-small-24b-2507",
-        "label": "Voxtral Small (Mistral)",
+        "id": "openai/gpt-audio-mini",
+        "label": "GPT Audio Mini (OpenAI)",
         "category": "Standard",
-        "manufacturer": "Mistral",
-        "description": "Mistral's 24B parameter audio-capable model",
+        "manufacturer": "OpenAI",
+        "description": "Compact GPT audio model",
     },
     {
-        "id": "openrouter/healer-alpha",
-        "label": "Healer Alpha (OpenRouter)",
+        "id": "google/gemini-2.5-pro",
+        "label": "Gemini 2.5 Pro (Google)",
         "category": "Standard",
-        "manufacturer": "OpenRouter",
-        "description": "OpenRouter's own audio-capable model",
+        "manufacturer": "Google",
+        "description": "Premium reasoning-capable audio model (overkill for short dictation)",
+    },
+    {
+        "id": "openai/gpt-audio",
+        "label": "GPT Audio (OpenAI)",
+        "category": "Standard",
+        "manufacturer": "OpenAI",
+        "description": "Full-size GPT audio model",
+    },
+    {
+        "id": "openai/gpt-4o-audio-preview",
+        "label": "GPT-4o Audio Preview (OpenAI)",
+        "category": "Standard",
+        "manufacturer": "OpenAI",
+        "description": "GPT-4o with native audio input",
     },
 ]
 
@@ -440,6 +471,7 @@ class Config:
     # Transcription
     vad_enabled: bool = True
     review_enabled: bool = False  # Second-pass coherence check (doubles latency)
+    streaming_enabled: bool = True  # Stream transcription via SSE for lower perceived latency
 
     # Format & tone
     format_preset: str = "general"
@@ -469,6 +501,9 @@ class Config:
     hotkey_append: str = "f19"         # Append: start recording to add to cache
     hotkey_pause: str = "f20"          # Pause/resume
     hotkey_retake: str = "f21"         # Discard current + restart recording
+    hotkey_toggle_app: str = ""        # Toggle "Show in window" output
+    hotkey_toggle_clipboard: str = ""  # Toggle "Clipboard" output
+    hotkey_toggle_inject: str = ""     # Toggle "Type at cursor" output
 
     # Window
     window_width: int = 700
