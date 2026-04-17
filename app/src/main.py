@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QTextEdit, QComboBox, QLabel, QDialog, QFormLayout,
     QLineEdit, QCheckBox, QMessageBox, QFrame, QSizePolicy,
     QListWidget, QListWidgetItem, QSplitter, QSystemTrayIcon, QMenu,
-    QTableWidget, QTableWidgetItem, QHeaderView,
+    QTableWidget, QTableWidgetItem, QHeaderView, QFileDialog,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QAction, QIcon
@@ -49,6 +49,15 @@ from .vad_processor import is_vad_available
 from .audio_feedback import get_feedback
 from .tts_announcer import get_announcer
 from .history import TranscriptionHistory
+from .dictionary import (
+    load_entries as load_dict_entries,
+    save_entries as save_dict_entries,
+    apply_substitutions,
+    export_csv as dict_export_csv,
+    export_json as dict_export_json,
+    import_csv as dict_import_csv,
+    import_json as dict_import_json,
+)
 
 
 class TranscriptionWorker(QThread):
@@ -97,6 +106,12 @@ class TranscriptionWorker(QThread):
                         text = review_result.text
                 except Exception:
                     pass  # Review failure is non-fatal; use first-pass result
+
+            # Custom dictionary substitutions — applied last, after any review
+            try:
+                text = apply_substitutions(text)
+            except Exception:
+                pass  # non-fatal
 
             elapsed = time.time() - start
             self.finished.emit(text, elapsed)
@@ -299,6 +314,50 @@ class SettingsDialog(QDialog):
 
         tabs.addTab(advanced, "Advanced")
 
+        # ── Tab 3: Dictionary ──
+        dictionary_tab = QWidget()
+        dl = QVBoxLayout(dictionary_tab)
+        dl.setSpacing(8)
+
+        info = QLabel(
+            "Post-processing substitutions applied after transcription. "
+            "Useful for names, jargon, or words the model consistently mishears. "
+            "Prefer this over the system prompt for fixed corrections."
+        )
+        info.setWordWrap(True)
+        dl.addWidget(info)
+
+        self.dict_table = QTableWidget(0, 4)
+        self.dict_table.setHorizontalHeaderLabels(
+            ["Mistaken as", "Correct to", "Whole word", "Case sensitive"]
+        )
+        hdr = self.dict_table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        for entry in load_dict_entries():
+            self._append_dict_row(entry)
+        dl.addWidget(self.dict_table)
+
+        dict_btns = QHBoxLayout()
+        add_btn = QPushButton("Add entry")
+        add_btn.clicked.connect(lambda: self._append_dict_row(None))
+        remove_btn = QPushButton("Remove selected")
+        remove_btn.clicked.connect(self._remove_dict_row)
+        import_btn = QPushButton("Import…")
+        import_btn.clicked.connect(self._import_dictionary)
+        export_btn = QPushButton("Export…")
+        export_btn.clicked.connect(self._export_dictionary)
+        dict_btns.addWidget(add_btn)
+        dict_btns.addWidget(remove_btn)
+        dict_btns.addStretch()
+        dict_btns.addWidget(import_btn)
+        dict_btns.addWidget(export_btn)
+        dl.addLayout(dict_btns)
+
+        tabs.addTab(dictionary_tab, "Dictionary")
+
         # ── Buttons ──
         btn_layout = QHBoxLayout()
         save_btn = QPushButton("Save")
@@ -310,8 +369,130 @@ class SettingsDialog(QDialog):
         btn_layout.addWidget(save_btn)
         outer.addLayout(btn_layout)
 
+    def _append_dict_row(self, entry: dict | None):
+        row = self.dict_table.rowCount()
+        self.dict_table.insertRow(row)
+        frm = (entry or {}).get("from", "")
+        to = (entry or {}).get("to", "")
+        whole = (entry or {}).get("whole_word", True)
+        case_sens = (entry or {}).get("case_sensitive", False)
+
+        self.dict_table.setItem(row, 0, QTableWidgetItem(frm))
+        self.dict_table.setItem(row, 1, QTableWidgetItem(to))
+
+        whole_cb = QCheckBox()
+        whole_cb.setChecked(whole)
+        case_cb = QCheckBox()
+        case_cb.setChecked(case_sens)
+        # Center the checkboxes in their cells
+        for col, cb in ((2, whole_cb), (3, case_cb)):
+            wrap = QWidget()
+            lay = QHBoxLayout(wrap)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.addWidget(cb)
+            lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.dict_table.setCellWidget(row, col, wrap)
+
+    def _remove_dict_row(self):
+        rows = sorted({i.row() for i in self.dict_table.selectedIndexes()}, reverse=True)
+        for r in rows:
+            self.dict_table.removeRow(r)
+
+    def _import_dictionary(self):
+        path_str, _ = QFileDialog.getOpenFileName(
+            self, "Import dictionary", "",
+            "Dictionary files (*.csv *.json);;CSV (*.csv);;JSON (*.json);;All files (*)"
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        try:
+            if path.suffix.lower() == ".json":
+                new_entries = dict_import_json(path)
+            else:
+                new_entries = dict_import_csv(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Import failed", f"Could not read {path.name}:\n{e}")
+            return
+
+        if not new_entries:
+            QMessageBox.information(self, "Import", "No entries found in file.")
+            return
+
+        # Ask: merge with existing or replace?
+        existing = self._collect_dict_entries()
+        if existing:
+            choice = QMessageBox.question(
+                self, "Import dictionary",
+                f"Found {len(new_entries)} entries. Merge with your {len(existing)} "
+                f"existing entries? (No = replace)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if choice == QMessageBox.StandardButton.Cancel:
+                return
+            if choice == QMessageBox.StandardButton.Yes:
+                # Merge: keep existing, add new entries whose `from` isn't already present
+                seen = {e["from"].lower() for e in existing}
+                merged = list(existing)
+                for e in new_entries:
+                    if e["from"].lower() not in seen:
+                        merged.append(e)
+                        seen.add(e["from"].lower())
+                new_entries = merged
+
+        self.dict_table.setRowCount(0)
+        for entry in new_entries:
+            self._append_dict_row(entry)
+
+    def _export_dictionary(self):
+        entries = self._collect_dict_entries()
+        if not entries:
+            QMessageBox.information(self, "Export", "Dictionary is empty.")
+            return
+        path_str, selected_filter = QFileDialog.getSaveFileName(
+            self, "Export dictionary", "dictionary.csv",
+            "CSV (*.csv);;JSON (*.json)"
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        try:
+            if path.suffix.lower() == ".json" or "JSON" in selected_filter:
+                if path.suffix.lower() != ".json":
+                    path = path.with_suffix(".json")
+                dict_export_json(entries, path)
+            else:
+                if path.suffix.lower() != ".csv":
+                    path = path.with_suffix(".csv")
+                dict_export_csv(entries, path)
+        except Exception as e:
+            QMessageBox.warning(self, "Export failed", str(e))
+
+    def _collect_dict_entries(self) -> list[dict]:
+        entries = []
+        for row in range(self.dict_table.rowCount()):
+            frm_item = self.dict_table.item(row, 0)
+            to_item = self.dict_table.item(row, 1)
+            frm = frm_item.text().strip() if frm_item else ""
+            if not frm:
+                continue
+            to = to_item.text() if to_item else ""
+            whole_wrap = self.dict_table.cellWidget(row, 2)
+            case_wrap = self.dict_table.cellWidget(row, 3)
+            whole_cb = whole_wrap.findChild(QCheckBox) if whole_wrap else None
+            case_cb = case_wrap.findChild(QCheckBox) if case_wrap else None
+            entries.append({
+                "from": frm,
+                "to": to,
+                "whole_word": whole_cb.isChecked() if whole_cb else True,
+                "case_sensitive": case_cb.isChecked() if case_cb else False,
+            })
+        return entries
+
     def get_config(self) -> Config:
         """Return updated config from dialog values."""
+        save_dict_entries(self._collect_dict_entries())
         self.config.openrouter_api_key = self.api_key_edit.text().strip()
         self.config.mistral_api_key = self.mistral_key_edit.text().strip()
         self.config.default_model = self.default_picker.selected_model_id()

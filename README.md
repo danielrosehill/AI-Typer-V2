@@ -15,6 +15,7 @@ The model automatically detects what you're dictating (email, shopping list, mee
 - **Voice Activity Detection (VAD)** — strips silence before sending to the API (saves cost and time)
 - **Automatic Gain Control (AGC)** — normalizes audio levels for consistent results
 - **Second-pass review** — optional coherence check catches misheard words
+- **Custom dictionary** — post-processing substitutions for words the model consistently mishears (names, jargon, acronyms). Import/export as CSV for portability with other dictation tools. See [docs/dictionary-format.md](docs/dictionary-format.md).
 - **Global hotkeys** — works system-wide, even when the app is minimized (F13-F24 keys)
 - **Append mode** — record multiple segments, then transcribe them together
 - **Output flexibility** — show in window, copy to clipboard, or type at cursor (three independent toggles; each bindable to a hotkey)
