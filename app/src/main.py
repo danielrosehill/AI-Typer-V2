@@ -56,11 +56,9 @@ class TranscriptionWorker(QThread):
     finished = pyqtSignal(str, float)  # text, elapsed_seconds
     error = pyqtSignal(str)
     status = pyqtSignal(str)  # status updates for UI
-    partial = pyqtSignal(str)  # accumulated partial text during streaming
-
     def __init__(self, api_key, model, raw_audio_data, prompt,
-                 review_enabled=False, vad_enabled=False, streaming_enabled=True,
-                 mistral_api_key=""):
+                 review_enabled=False, vad_enabled=False,
+                 mistral_api_key="", provider="openrouter"):
         super().__init__()
         self.api_key = api_key
         self.mistral_api_key = mistral_api_key
@@ -69,7 +67,7 @@ class TranscriptionWorker(QThread):
         self.prompt = prompt
         self.review_enabled = review_enabled
         self.vad_enabled = vad_enabled
-        self.streaming_enabled = streaming_enabled
+        self.provider = provider
 
     def run(self):
         try:
@@ -84,13 +82,9 @@ class TranscriptionWorker(QThread):
 
             self.status.emit("Transcribing...")
             client = get_client(self.api_key, self.model,
-                                mistral_api_key=self.mistral_api_key)
-            if self.streaming_enabled:
-                def _on_delta(_delta: str, accumulated: str):
-                    self.partial.emit(accumulated)
-                result = client.transcribe_stream(processed, self.prompt, _on_delta)
-            else:
-                result = client.transcribe(processed, self.prompt)
+                                mistral_api_key=self.mistral_api_key,
+                                provider=self.provider)
+            result = client.transcribe(processed, self.prompt)
             text = result.text
 
             # Second-pass review
@@ -442,6 +436,21 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.translation_label)
         self._update_translation_indicator()
 
+        # Provider selector (OpenRouter / Mistral)
+        provider_label = QLabel("Provider:")
+        provider_label.setStyleSheet("color: #888; font-size: 12px;")
+        controls.addWidget(provider_label)
+
+        self.provider_combo = QComboBox()
+        self.provider_combo.setMinimumWidth(110)
+        self.provider_combo.addItem("OpenRouter", "openrouter")
+        self.provider_combo.addItem("Mistral", "mistral")
+        idx = self.provider_combo.findData(self.config.provider)
+        if idx >= 0:
+            self.provider_combo.setCurrentIndex(idx)
+        self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        controls.addWidget(self.provider_combo)
+
         # Model selector (Default / Budget / individual models)
         model_label = QLabel("Model:")
         model_label.setStyleSheet("color: #888; font-size: 12px;")
@@ -755,24 +764,31 @@ class MainWindow(QMainWindow):
             label = label[:label.rfind("(")].strip()
         return label
 
+    def _models_for_provider(self) -> list[dict]:
+        """Return the model list filtered to the current provider."""
+        if self.config.provider == "mistral":
+            return [m for m in MODELS if m["manufacturer"] == "Mistral"]
+        return list(MODELS)
+
     def _populate_model_combo(self):
         """Fill the main UI model combo with Default, Budget, then all models."""
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
 
-        default_name = self._short_model_name(self.config.default_model)
-        budget_name = self._short_model_name(self.config.default_budget_model)
+        available = self._models_for_provider()
+        available_ids = {m["id"] for m in available}
 
-        # Defaults header
-        self.model_combo.addItem("── Defaults ──")
-        self.model_combo.model().item(self.model_combo.count() - 1).setEnabled(False)
-        self.model_combo.addItem(f"  {default_name}", "__default__")
-        self.model_combo.addItem(f"  Budget: {budget_name}", "__budget__")
-        self.model_combo.insertSeparator(self.model_combo.count())
+        if self.config.provider == "openrouter":
+            default_name = self._short_model_name(self.config.default_model)
+            budget_name = self._short_model_name(self.config.default_budget_model)
+            self.model_combo.addItem("── Defaults ──")
+            self.model_combo.model().item(self.model_combo.count() - 1).setEnabled(False)
+            self.model_combo.addItem(f"  {default_name}", "__default__")
+            self.model_combo.addItem(f"  Budget: {budget_name}", "__budget__")
+            self.model_combo.insertSeparator(self.model_combo.count())
 
-        # All models: Standard first, then Budget
         for cat in ["Standard", "Budget"]:
-            models_in_cat = [m for m in MODELS if m["category"] == cat]
+            models_in_cat = [m for m in available if m["category"] == cat]
             if not models_in_cat:
                 continue
             self.model_combo.addItem(f"── {cat} ──")
@@ -786,18 +802,29 @@ class MainWindow(QMainWindow):
         active = self.config.active_model
         default_idx = self.model_combo.findData("__default__")
         budget_idx = self.model_combo.findData("__budget__")
-        if not active or active == self.config.default_model:
+        if self.config.provider == "openrouter" and (not active or active == self.config.default_model):
             self.model_combo.setCurrentIndex(default_idx)
-        elif active == self.config.default_budget_model:
+        elif self.config.provider == "openrouter" and active == self.config.default_budget_model:
             self.model_combo.setCurrentIndex(budget_idx)
-        else:
+        elif active and active in available_ids:
             idx = self.model_combo.findData(active)
             if idx >= 0:
                 self.model_combo.setCurrentIndex(idx)
-            else:
-                self.model_combo.setCurrentIndex(default_idx)
+        else:
+            # Fall back to first real model in the provider list
+            for i in range(self.model_combo.count()):
+                data = self.model_combo.itemData(i)
+                if data and data not in ("__default__", "__budget__"):
+                    self.model_combo.setCurrentIndex(i)
+                    self.config.active_model = data
+                    break
 
         self.model_combo.blockSignals(False)
+
+    def _on_provider_changed(self):
+        self.config.provider = self.provider_combo.currentData() or "openrouter"
+        save_config(self.config)
+        self._populate_model_combo()
 
     def _on_model_changed(self):
         data = self.model_combo.currentData()
@@ -1172,23 +1199,12 @@ class MainWindow(QMainWindow):
             prompt=prompt,
             review_enabled=self.config.review_enabled,
             vad_enabled=self.config.vad_enabled,
-            streaming_enabled=self.config.streaming_enabled,
+            provider=self.config.provider,
         )
         self.worker.status.connect(self.status_label.setText)
         self.worker.finished.connect(self._on_transcription_done)
         self.worker.error.connect(self._on_transcription_error)
-        self.worker.partial.connect(self._on_partial_text)
         self.worker.start()
-
-    def _on_partial_text(self, accumulated: str):
-        """Live-update the text box while streaming."""
-        if self.config.output_to_app and accumulated:
-            self.text_edit.setMarkdown(accumulated)
-            cursor = self.text_edit.textCursor()
-            cursor.movePosition(cursor.MoveOperation.End)
-            self.text_edit.setTextCursor(cursor)
-        # Compact progress indicator in the status bar
-        self.status_label.setText(f"Transcribing... ({len(accumulated)} chars)")
 
     def _on_transcription_done(self, text: str, elapsed: float):
         self.record_btn.setEnabled(True)
@@ -1249,13 +1265,12 @@ class MainWindow(QMainWindow):
     def _inject_text(self, text: str):
         """Paste text at cursor position via clipboard + Ctrl+Shift+V.
 
-        Uses Ctrl+Shift+V (not Ctrl+V) because terminals (Konsole, VS Code
-        terminal, Claude Code CLI) reserve Ctrl+V for the `lnext` literal-input
-        function. Ctrl+Shift+V is the universal paste shortcut — it works in
-        terminals AND in Kate, browsers, and most GUI apps on KDE Plasma.
+        Copies the text to the clipboard then triggers a paste keystroke —
+        so the whole block arrives in one go instead of keystroke-by-keystroke.
+        Uses Ctrl+Shift+V (universal paste shortcut that works in terminals too).
         """
         try:
-            # Save current clipboard
+            # Save current clipboard so we can restore it after paste
             old_clip = None
             try:
                 result = subprocess.run(
@@ -1267,12 +1282,10 @@ class MainWindow(QMainWindow):
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
 
-            # Set clipboard to transcribed text and paste
             copy_to_clipboard(text)
-            # ydotool key codes: 29=LeftCtrl, 42=LeftShift, 47=V (from linux/input-event-codes.h)
-            # Using numeric codes for ctrl+shift+v: press all, release all.
+            # ydotool 0.1.8 syntax: modifiers joined with + (no :state suffix)
             subprocess.run(
-                ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"],
+                ["ydotool", "key", "ctrl+shift+v"],
                 timeout=5, capture_output=True,
             )
 

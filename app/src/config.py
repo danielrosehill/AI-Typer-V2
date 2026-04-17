@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -471,11 +471,11 @@ class Config:
     default_model: str = "mistralai/voxtral-small-24b-2507"
     default_budget_model: str = "mistralai/voxtral-small-24b-2507"
     active_model: str = ""  # Runtime override from main UI (empty = use default_model)
+    provider: str = "openrouter"  # "openrouter" or "mistral" — top-bar provider selector
 
     # Transcription
     vad_enabled: bool = True
     review_enabled: bool = False  # Second-pass coherence check (doubles latency)
-    streaming_enabled: bool = True  # Stream transcription via SSE for lower perceived latency
 
     # Format & tone
     format_preset: str = "general"
@@ -487,7 +487,7 @@ class Config:
     email_signature: str = "Best regards"
 
     # Output modes (independent toggles)
-    output_to_app: bool = True
+    output_to_app: bool = False
     output_to_clipboard: bool = True
     output_to_inject: bool = False
 

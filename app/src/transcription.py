@@ -272,12 +272,19 @@ _OR_TO_MISTRAL_MODEL = {
 
 
 def get_client(api_key: str, model: str,
-               mistral_api_key: str = "") -> OpenRouterClient:
+               mistral_api_key: str = "",
+               provider: str = "openrouter") -> OpenRouterClient:
     """Factory function to get transcription client.
 
-    If the model is a Mistral-native model (e.g. Voxtral) and a Mistral API key
-    is provided, routes directly to Mistral's API. Otherwise uses OpenRouter.
+    provider="mistral" forces direct Mistral API routing (requires mistral_api_key).
+    provider="openrouter" (default) uses OpenRouter, but will auto-route Mistral
+    models to Mistral direct if a mistral_api_key is set.
     """
+    if provider == "mistral":
+        if not mistral_api_key:
+            raise ValueError("Mistral provider selected but no Mistral API key configured")
+        mistral_model = _OR_TO_MISTRAL_MODEL.get(model, model.split("/", 1)[-1])
+        return OpenRouterClient(mistral_api_key, mistral_model, api_url=MISTRAL_API_URL)
     if mistral_api_key and model.startswith("mistralai/"):
         mistral_model = _OR_TO_MISTRAL_MODEL.get(model, model.split("/", 1)[1])
         return OpenRouterClient(mistral_api_key, mistral_model, api_url=MISTRAL_API_URL)
