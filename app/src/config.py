@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-APP_VERSION = "0.5.4"
+APP_VERSION = "0.5.5"
 from dataclasses import dataclass, asdict
 from typing import Optional
 
@@ -23,7 +23,7 @@ MODELS = [
         "label": "Voxtral Small 24B (Mistral)",
         "category": "Budget",
         "manufacturer": "Mistral",
-        "description": "Recommended default for live dictation — ~1.0s latency, WER ~0.02, 2-8× faster than Gemini. 32k context (~15 min audio max).",
+        "description": "Not recommended for this app — fast and accurate at raw ASR, but frequently interprets dictation content as chat instructions in single-pass mode. Use a Gemini model instead.",
     },
     {
         "id": "google/gemini-2.0-flash-lite-001",
@@ -105,12 +105,12 @@ MODELS = [
     },
 ]
 
-# Default models — per in-house WER/latency evals (see
-# https://huggingface.co/blog/danielrosehill/audio-multimodal-bitrate-wer):
-# Voxtral is the primary recommendation for live dictation (latency ~1s, WER ~0.02),
-# with Gemini 3 Flash Preview as the accuracy-optimal alternative (WER ~0.014, ~2.2s).
-DEFAULT_MODEL = "mistralai/voxtral-small-24b-2507"
-DEFAULT_BUDGET_MODEL = "mistralai/voxtral-small-24b-2507"
+# Default models — chosen for reliable single-pass "transcribe + format"
+# behavior. Voxtral is faster on raw ASR but too prone to treating dictation
+# as chat instructions in this flow, so it is not the default. Gemini models
+# handle the single-pass prompt robustly.
+DEFAULT_MODEL = "google/gemini-3-flash-preview"
+DEFAULT_BUDGET_MODEL = "google/gemini-3.1-flash-lite-preview"
 
 # Review agent model (cheap, fast)
 REVIEW_MODEL = "google/gemini-3.1-flash-lite-preview"
@@ -494,8 +494,8 @@ class Config:
     # API
     openrouter_api_key: str = ""
     mistral_api_key: str = ""  # Direct Mistral API — used for Voxtral when set
-    default_model: str = "mistralai/voxtral-small-24b-2507"
-    default_budget_model: str = "mistralai/voxtral-small-24b-2507"
+    default_model: str = "google/gemini-3-flash-preview"
+    default_budget_model: str = "google/gemini-3.1-flash-lite-preview"
     active_model: str = ""  # Runtime override from main UI (empty = use default_model)
     provider: str = "openrouter"  # "openrouter" or "mistral" — top-bar provider selector
 
