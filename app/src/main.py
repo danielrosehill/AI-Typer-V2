@@ -2044,12 +2044,68 @@ class MainWindow(QMainWindow):
         self.record_btn.setStyleSheet(self._record_btn_style(False))
         self.status_label.setText(f"Mic error: {error}")
 
-    def _inject_text(self, text: str):
-        """Paste text at cursor position via clipboard + Ctrl+Shift+V.
+    # Window classes (lowercased) that use Ctrl+Shift+V for paste instead
+    # of Ctrl+V. Terminals are the main case since Ctrl+V in a terminal
+    # sends a literal control character instead of pasting.
+    _TERMINAL_CLASSES = {
+        "konsole", "yakuake", "xterm", "uxterm", "gnome-terminal",
+        "gnome-terminal-server", "org.gnome.terminal", "alacritty",
+        "kitty", "org.kde.konsole", "org.kde.yakuake", "wezterm",
+        "wezterm-gui", "tilix", "terminator", "xfce4-terminal",
+        "ptyxis", "foot", "footclient", "org.contour.contour",
+        "rxvt", "urxvt", "st-256color", "ghostty",
+    }
 
-        Copies the text to the clipboard then triggers a paste keystroke —
-        so the whole block arrives in one go instead of keystroke-by-keystroke.
-        Uses Ctrl+Shift+V (universal paste shortcut that works in terminals too).
+    def _detect_active_window_class(self) -> Optional[str]:
+        """Return the active window's class name (lowercased), or None.
+
+        Uses kdotool, which works under KDE Plasma on both Wayland-native
+        and XWayland windows by talking to KWin via D-Bus.
+        """
+        try:
+            wid_res = subprocess.run(
+                ["kdotool", "getactivewindow"],
+                capture_output=True, timeout=2, text=True,
+            )
+            if wid_res.returncode != 0:
+                return None
+            wid = wid_res.stdout.strip()
+            if not wid:
+                return None
+            cls_res = subprocess.run(
+                ["kdotool", "getwindowclassname", wid],
+                capture_output=True, timeout=2, text=True,
+            )
+            if cls_res.returncode != 0:
+                return None
+            return cls_res.stdout.strip().lower() or None
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+        except Exception:
+            return None
+
+    def _paste_shortcut_for(self, window_class: Optional[str]) -> str:
+        """Choose the right paste shortcut for the focused window.
+
+        Terminals (Konsole, etc.) use Ctrl+Shift+V because Ctrl+V sends
+        a literal control character. Everything else — Kate, browsers,
+        IDEs, chat apps — uses plain Ctrl+V. (Ctrl+Shift+V in Kate
+        opens the clipboard-history / paste-special dialog, which is
+        why pastes were silently failing there.)
+        """
+        if window_class and any(t in window_class for t in self._TERMINAL_CLASSES):
+            return "ctrl+shift+v"
+        return "ctrl+v"
+
+    def _inject_text(self, text: str):
+        """Paste text at cursor position via clipboard + synthetic paste key.
+
+        Works across both Wayland-native (Kate) and XWayland (Konsole) apps:
+        KWin hands the ydotool-injected keystroke to whichever window has
+        focus, regardless of protocol. The tricky part is that different
+        apps bind paste to different shortcuts — so we detect the focused
+        window class with kdotool and pick Ctrl+V or Ctrl+Shift+V
+        accordingly.
         """
         try:
             # Save current clipboard so we can restore it after paste
@@ -2065,9 +2121,19 @@ class MainWindow(QMainWindow):
                 pass
 
             copy_to_clipboard(text)
+
+            # Detect focused window and pick the correct paste shortcut.
+            win_class = self._detect_active_window_class()
+            shortcut = self._paste_shortcut_for(win_class)
+            if os.environ.get("VOICE_TYPER_DEBUG"):
+                print(
+                    f"[paste] window_class={win_class} shortcut={shortcut}",
+                    file=sys.stderr,
+                )
+
             # ydotool 0.1.8 syntax: modifiers joined with + (no :state suffix)
             subprocess.run(
-                ["ydotool", "key", "ctrl+shift+v"],
+                ["ydotool", "key", shortcut],
                 timeout=5, capture_output=True,
             )
 
