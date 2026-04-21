@@ -32,9 +32,14 @@ This is the controlling constraint for this app. Even though Gemini's **native**
 
 ## Size limits
 
-- **Request body cap: ~20 MB** for the full JSON payload (base64-encoded audio + messages). Base64 inflates binary by ~33%, so the effective raw-audio ceiling is roughly **15 MB**.
+- **Request body cap: ~25-30 MB** observed before OpenRouter's edge proxies start rejecting. Base64 inflates binary by ~33%, so the app budgets **20 MB of raw MP3** (`MAX_MP3_BYTES` in `audio_processor.py`) before falling back to lower bitrates.
 - **Per-model context**: audio is tokenized per-provider. Gemini counts audio at ~32 tokens/second; GPT-Audio and Voxtral use their own tokenizers. A 20-minute clip at Gemini rates ≈ 38k tokens, well within Gemini's 1M context but bumping against Voxtral's 32k window.
-- **Recommended practical ceiling for dictation**: keep single uploads under ~10 minutes. Longer sessions should be segmented (this app's cache-and-append workflow handles that naturally).
+- **Effective duration ceilings** (derived from the 20 MB MP3 budget):
+  - 32 kbps (default): ~83 min
+  - 24 kbps (fallback): ~110 min
+  - 16 kbps (last-resort fallback): ~2h 45min
+- Above ~2h 45min, the app raises a clear error and asks the user to split the recording. The bitrate fallback is automatic — no user action needed for anything up to that ceiling.
+- **Long-recording timeout**: the HTTP request timeout scales with audio size (`120s + 20s per MB`, capped at 10 min) — a 30-min clip gets ~250 s, enough for Gemini 3 Flash to finish.
 
 ## Bitrate / sample-rate guidance
 

@@ -297,11 +297,18 @@ class OpenRouterClient:
         payload = self._build_audio_payload(audio_data, prompt, audio_format)
         session = self._get_session()
 
+        # Scale timeout with audio size. A 32 kbps MP3 is ~240 KB/min, and
+        # Gemini 3 Flash typically processes at roughly 10× real-time, so a
+        # 30-min clip can legitimately take 2-3 minutes end-to-end. Budget
+        # generously: 120 s floor, +20 s per MB of MP3, capped at 10 min.
+        size_mb = len(audio_data) / 1_048_576
+        request_timeout = min(600, max(120, int(120 + size_mb * 20)))
+
         attempts = 3
         last_exc: Optional[Exception] = None
         for attempt in range(1, attempts + 1):
             try:
-                response = session.post(self.api_url, json=payload, timeout=120)
+                response = session.post(self.api_url, json=payload, timeout=request_timeout)
                 response.raise_for_status()
                 break
             except requests.exceptions.RequestException as e:
@@ -337,8 +344,11 @@ class OpenRouterClient:
         """
         payload = self._build_audio_payload(audio_data, prompt, audio_format, stream=True)
 
+        size_mb = len(audio_data) / 1_048_576
+        request_timeout = min(600, max(120, int(120 + size_mb * 20)))
+
         session = self._get_session()
-        response = session.post(self.api_url, json=payload, timeout=120, stream=True)
+        response = session.post(self.api_url, json=payload, timeout=request_timeout, stream=True)
         response.raise_for_status()
 
         accumulated = ""
