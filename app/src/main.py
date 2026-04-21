@@ -54,6 +54,8 @@ from .vad_processor import is_vad_available
 from .audio_feedback import get_feedback
 from .tts_announcer import get_announcer
 from .history import TranscriptionHistory
+from .recording_store import RecordingStore
+from .recording_history_window import RecordingHistoryWindow
 from .dictionary import (
     load_entries as load_dict_entries,
     save_entries as save_dict_entries,
@@ -918,6 +920,20 @@ class MainWindow(QMainWindow):
         self._raw_text: str = ""  # Raw markdown text (for clipboard/append)
         self._append_mode: bool = False  # When True, transcription appends to existing text
         self._history = TranscriptionHistory(max_items=20)
+
+        # Persistent on-disk recording store (24h retention + crash recovery)
+        self._rec_store = RecordingStore()
+        try:
+            self._rec_store.cleanup_old()
+        except Exception:
+            pass
+        self._active_entry_id: Optional[str] = None  # current in-flight transcription
+        self._recovered_entry = None
+        try:
+            self._recovered_entry = self._rec_store.recover_crashed()
+        except Exception:
+            pass
+
         self._duration_timer = QTimer()
         self._duration_timer.timeout.connect(self._update_duration)
 
@@ -946,6 +962,19 @@ class MainWindow(QMainWindow):
         # Check API key on startup
         if not self.config.openrouter_api_key:
             QTimer.singleShot(500, self._prompt_api_key)
+
+        # Surface a banner if we recovered a partial recording from a crash
+        if self._recovered_entry is not None:
+            mins = int(self._recovered_entry.duration_seconds // 60)
+            secs = int(self._recovered_entry.duration_seconds % 60)
+            QTimer.singleShot(
+                600,
+                lambda: self._show_error_banner(
+                    f"Recovered a partial recording ({mins}:{secs:02d}) from a "
+                    f"previous session. Open Tools → Recording History (Ctrl+H) "
+                    f"to re-transcribe it."
+                ),
+            )
 
     def _setup_ui(self):
         self.setWindowTitle("Multimodal Voice Typer")
@@ -1383,6 +1412,11 @@ class MainWindow(QMainWindow):
         usage_action.triggered.connect(self._show_usage)
         tools_menu.addAction(usage_action)
 
+        recording_history_action = QAction("Recording &History…", self)
+        recording_history_action.setShortcut("Ctrl+H")
+        recording_history_action.triggered.connect(self._show_recording_history)
+        tools_menu.addAction(recording_history_action)
+
         help_menu = menu.addMenu("&Help")
         models_action = QAction("&Supported Models...", self)
         models_action.triggered.connect(self._show_models_info)
@@ -1738,7 +1772,17 @@ class MainWindow(QMainWindow):
         self.recorder.silence_timeout_seconds = float(
             getattr(self.config, "auto_stop_silence_seconds", 0.0) or 0.0
         )
+        # Wire PCM spill for crash recovery. Writes raw int16 frames to a
+        # known path alongside the in-memory buffer; cleared on clean stop.
+        try:
+            self.recorder.spill_path = str(self._rec_store.active_pcm_path())
+        except Exception:
+            self.recorder.spill_path = None
         if self.recorder.start_recording():
+            try:
+                self._rec_store.mark_active(self.recorder.actual_sample_rate)
+            except Exception:
+                pass
             self.level_meter.set_level(0.0)
             self.level_meter.setVisible(bool(self.config.show_level_meter))
             if not self._append_mode:
@@ -1763,6 +1807,7 @@ class MainWindow(QMainWindow):
             return
         self._duration_timer.stop()
         audio_data = self.recorder.stop_recording()
+        self._rec_store.clear_active()
         self._audio_feedback("play_stop", "announce_stopped")
         self._reset_record_buttons()
 
@@ -1781,6 +1826,7 @@ class MainWindow(QMainWindow):
             return
         self._duration_timer.stop()
         audio_data = self.recorder.stop_recording()
+        self._rec_store.clear_active()
         self._cached_segments.append(audio_data)
         self._audio_feedback("play_cached", "announce_cached")
         self._reset_record_buttons()
@@ -1874,6 +1920,7 @@ class MainWindow(QMainWindow):
         if self.recorder.is_recording:
             self._duration_timer.stop()
             self.recorder.stop_recording()  # Discard the audio
+            self._rec_store.clear_active()
         self._reset_record_buttons()
         self._audio_feedback("play_clear", "announce_cleared")
         self.status_label.setText("Retake...")
@@ -1884,6 +1931,7 @@ class MainWindow(QMainWindow):
         if self.recorder.is_recording:
             self._duration_timer.stop()
             self.recorder.stop_recording()
+            self._rec_store.clear_active()
         self._reset_record_buttons()
         self._audio_feedback("play_clear", "announce_discarded")
         self.duration_label.setText("")
@@ -1926,11 +1974,26 @@ class MainWindow(QMainWindow):
             self.retry_btn.setEnabled(True)
 
         # Stats: count recording seconds (from raw WAV)
+        duration_seconds = 0.0
         try:
             from .audio_processor import get_audio_duration
-            self._bump_record_seconds(get_audio_duration(audio_data))
+            duration_seconds = get_audio_duration(audio_data)
+            self._bump_record_seconds(duration_seconds)
         except Exception:
             pass
+
+        # Persist to the on-disk recording store so a mid-transcription crash
+        # doesn't lose the audio. Transcript is attached once the API returns.
+        try:
+            entry = self._rec_store.save_entry(
+                audio_data,
+                status="transcribing",
+                duration_seconds=duration_seconds,
+                model=self._effective_model(),
+            )
+            self._active_entry_id = entry.id
+        except Exception:
+            self._active_entry_id = None
 
         self._hide_error_banner()
         self.status_label.setText("Processing audio...")
@@ -1964,6 +2027,19 @@ class MainWindow(QMainWindow):
     def _on_transcription_done(self, text: str, elapsed: float):
         self.record_btn.setEnabled(True)
         self._update_tray_state("complete")
+
+        # Persist transcript to on-disk store for this recording
+        if self._active_entry_id:
+            try:
+                self._rec_store.attach_transcript(
+                    self._active_entry_id,
+                    text,
+                    model=self._effective_model(),
+                    elapsed_seconds=elapsed,
+                )
+            except Exception:
+                pass
+            self._active_entry_id = None
 
         # Stats: count sessions + words
         self._stats_sessions += 1
@@ -2026,6 +2102,12 @@ class MainWindow(QMainWindow):
         self.record_btn.setEnabled(True)
         self.status_label.setText(f"Error: {error}")
         self._update_tray_state("idle")
+        if self._active_entry_id:
+            try:
+                self._rec_store.mark_failed(self._active_entry_id, error)
+            except Exception:
+                pass
+            self._active_entry_id = None
         hint = ""
         low = error.lower()
         if "401" in error or "403" in error or "auth" in low or "api key" in low:
@@ -2440,6 +2522,20 @@ class MainWindow(QMainWindow):
         dlg = UsageDialog(self, api_key=self.config.openrouter_api_key,
                           session_stats=self._session_stats_dict())
         dlg.exec()
+
+    def _show_recording_history(self):
+        dlg = RecordingHistoryWindow(self._rec_store, self)
+        dlg.retranscribe_requested.connect(self._retranscribe_from_file)
+        dlg.exec()
+
+    def _retranscribe_from_file(self, wav_path: str):
+        try:
+            with open(wav_path, "rb") as f:
+                audio_data = f.read()
+        except Exception as e:
+            self._show_error_banner(f"Could not read audio file: {e}")
+            return
+        self._transcribe(audio_data)
 
     def _session_stats_dict(self) -> dict:
         self._roll_stats_if_new_day()

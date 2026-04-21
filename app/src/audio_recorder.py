@@ -54,6 +54,11 @@ class AudioRecorder:
         self._error_occurred = False
         self._speech_seen: bool = False
         self._silence_started_at: float = 0.0
+        # Optional spill path: when set, raw int16 PCM frames are appended to
+        # this file as they are captured. Used for crash-recovery of
+        # in-progress recordings (see recording_store.RecordingStore).
+        self.spill_path: Optional[str] = None
+        self._spill_file = None
 
     def _get_supported_sample_rate(self, device_index: Optional[int]) -> int:
         """Find a supported sample rate for the device."""
@@ -112,6 +117,16 @@ class AudioRecorder:
                 self.on_error(f"Failed to open microphone: {e}")
             return False
 
+        # Open spill file (if configured) for crash-recovery. Failures here
+        # are non-fatal — recording continues without spill.
+        self._spill_file = None
+        if self.spill_path:
+            try:
+                self._spill_file = open(self.spill_path, "wb")
+            except Exception as e:
+                logger.warning("Could not open spill file %s: %s", self.spill_path, e)
+                self._spill_file = None
+
         self._record_thread = threading.Thread(target=self._record_loop, daemon=True)
         self._record_thread.start()
         return True
@@ -125,6 +140,11 @@ class AudioRecorder:
                     data = self.stream.read(self.CHUNK, exception_on_overflow=False)
                     with self._lock:
                         self.frames.append(data)
+                    if self._spill_file is not None:
+                        try:
+                            self._spill_file.write(data)
+                        except Exception:
+                            pass
                     consecutive_errors = 0
 
                     # Compute RMS for level meter + silence detection
@@ -188,6 +208,12 @@ class AudioRecorder:
             self.stream.stop_stream()
             self.stream.close()
             self.stream = None
+        if self._spill_file is not None:
+            try:
+                self._spill_file.close()
+            except Exception:
+                pass
+            self._spill_file = None
         return self._frames_to_wav()
 
     def _frames_to_wav(self) -> bytes:
